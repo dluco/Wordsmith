@@ -1,0 +1,14 @@
+/* Wordsworth application stylesheet, bundled as a GResource and loaded at
+ * startup with STYLE_PROVIDER_PRIORITY_APPLICATION. */
+
+/* Placeholder text shown in each empty pane until real content lands. */
+.pane-placeholder {
+    color: alpha(currentColor, 0.45);
+    font-style: italic;
+}
+
+/* The manuscript pane reads as a page, so it keeps the plain view background
+ * rather than the window's chrome colour. */
+.editor-pane {
+    background-color: @view_bg_color;
+}
