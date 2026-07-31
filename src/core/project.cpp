@@ -48,6 +48,28 @@ bool is_document(const fs::path& path)
     return lowercase(path.extension().string()) == DOCUMENT_EXTENSION;
 }
 
+/* Whether `candidate` is `ancestor` or sits beneath it. Compares canonical
+ * components rather than strings, so `a/../b` and a trailing slash do not
+ * change the answer. */
+bool path_is_within(const fs::path& ancestor, const fs::path& candidate)
+{
+    std::error_code code;
+    const fs::path top = fs::weakly_canonical(ancestor, code);
+    const fs::path below = fs::weakly_canonical(candidate, code);
+    if (code) {
+        return false;
+    }
+
+    auto top_part = top.begin();
+    auto below_part = below.begin();
+    for (; top_part != top.end(); ++top_part, ++below_part) {
+        if (below_part == below.end() || *below_part != *top_part) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 /* ── binder ─────────────────────────────────────────────────────────────── */
@@ -219,25 +241,11 @@ bool Project::save_settings(std::string& error) const
 
 bool Project::contains(const fs::path& path) const
 {
-    std::error_code code;
-    const fs::path manuscript = fs::weakly_canonical(manuscript_path(), code);
-    const fs::path candidate = fs::weakly_canonical(path, code);
-    if (code) {
-        return false;
-    }
-
-    auto manuscript_part = manuscript.begin();
-    auto candidate_part = candidate.begin();
-    for (; manuscript_part != manuscript.end(); ++manuscript_part, ++candidate_part) {
-        if (candidate_part == candidate.end() || *candidate_part != *manuscript_part) {
-            return false;
-        }
-    }
-    return true;
+    return path_is_within(manuscript_path(), path);
 }
 
 bool Project::create_folder(const fs::path& parent, std::string_view name,
-                            std::string& error) const
+                            fs::path& created_path, std::string& error) const
 {
     if (!contains(parent)) {
         error = "target folder is outside the manuscript";
@@ -254,6 +262,54 @@ bool Project::create_folder(const fs::path& parent, std::string_view name,
         error = "cannot create folder: " + code.message();
         return false;
     }
+    created_path = target;
+    return true;
+}
+
+bool Project::move_entry(const fs::path& source, const fs::path& destination_parent,
+                         fs::path& moved_path, std::string& error) const
+{
+    if (!contains(source)) {
+        error = "the item being moved is outside the manuscript";
+        return false;
+    }
+    if (path_is_within(source, manuscript_path())) {
+        error = "the manuscript folder cannot be moved";
+        return false;
+    }
+    if (!contains(destination_parent)) {
+        error = "target folder is outside the manuscript";
+        return false;
+    }
+
+    std::error_code code;
+    if (!fs::is_directory(destination_parent, code)) {
+        error = "target is not a folder";
+        return false;
+    }
+    /* Moving a folder inside itself would detach the subtree from the
+     * manuscript entirely, and rename() will not stop us. */
+    if (path_is_within(source, destination_parent)) {
+        error = "a folder cannot be moved into itself";
+        return false;
+    }
+
+    const fs::path target = destination_parent / source.filename();
+    if (path_is_within(target, source) && path_is_within(source, target)) {
+        moved_path = source;   // already there; nothing to do
+        return true;
+    }
+    if (fs::exists(target, code)) {
+        error = target.filename().string() + " already exists in the target folder";
+        return false;
+    }
+
+    fs::rename(source, target, code);
+    if (code) {
+        error = "cannot move " + source.filename().string() + ": " + code.message();
+        return false;
+    }
+    moved_path = target;
     return true;
 }
 

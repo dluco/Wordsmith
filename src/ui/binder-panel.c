@@ -52,11 +52,17 @@ static BinderItem* binder_item_new(const WordsmithBinderNode* node)
 
 /* ── panel ───────────────────────────────────────────────────────────────── */
 
+/* Set on each row widget in `setup`, so a right-click can find which row it
+ * landed on by walking up from the picked widget. The GtkListItem outlives the
+ * items bound into it, which is what makes it safe to stash. */
+#define ROW_LIST_ITEM_KEY "binder-list-item"
+
 struct BinderPanel {
     GtkWidget*        root;   /* borrowed once parented into the window */
     GtkListView*      list_view;
     GtkTreeListModel* tree_model;
     GtkSingleSelection* selection;
+    GtkWidget*        context_menu;  /* GtkPopoverMenu, parented to the list view */
 
     WordsmithProject* project;   /* borrowed; NULL when no project is open */
 
@@ -103,6 +109,7 @@ static void on_setup_row(GtkSignalListItemFactory* factory, GtkListItem* list_it
     gtk_box_append(GTK_BOX(box), icon);
     gtk_box_append(GTK_BOX(box), label);
     gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), box);
+    g_object_set_data(G_OBJECT(expander), ROW_LIST_ITEM_KEY, list_item);
 
     gtk_list_item_set_child(list_item, expander);
 }
@@ -152,6 +159,103 @@ static void on_selection_changed(GObject* object, GParamSpec* spec,
     binder->select_callback(item->path, item->is_folder ? 1 : 0,
                             binder->select_user_data);
     g_object_unref(item);
+}
+
+/* ── context menu ────────────────────────────────────────────────────────── */
+
+/* The BinderItem under (x, y) in list-view coordinates, or NULL over empty
+ * space. Owned by the caller. */
+static BinderItem* row_item_at(BinderPanel* binder, double x, double y)
+{
+    GtkWidget* picked = gtk_widget_pick(GTK_WIDGET(binder->list_view), x, y,
+                                        GTK_PICK_DEFAULT);
+
+    while (picked != NULL && picked != GTK_WIDGET(binder->list_view)) {
+        GtkListItem* list_item = g_object_get_data(G_OBJECT(picked), ROW_LIST_ITEM_KEY);
+        if (list_item != NULL) {
+            GtkTreeListRow* row = gtk_list_item_get_item(list_item);
+            return row != NULL ? gtk_tree_list_row_get_item(row) : NULL;
+        }
+        picked = gtk_widget_get_parent(picked);
+    }
+    return NULL;
+}
+
+static void append_targeted(GMenu* section, const char* label, const char* action,
+                            const char* target)
+{
+    GMenuItem* item = g_menu_item_new(label, NULL);
+    /* The path travels in the action's target rather than in state kept on the
+     * panel: the name prompt is modal and answered long after the popover has
+     * closed, so anything the binder remembered would be stale by then. */
+    g_menu_item_set_action_and_target_value(item, action, g_variant_new_string(target));
+    g_menu_append_item(section, item);
+    g_object_unref(item);
+}
+
+static void show_context_menu(BinderPanel* binder, double x, double y,
+                              const char* target_folder, const char* item_path)
+{
+    GMenu* model = g_menu_new();
+
+    GMenu* create = g_menu_new();
+    append_targeted(create, "New Text", "win.new-text-in", target_folder);
+    append_targeted(create, "New Folder", "win.new-folder-in", target_folder);
+    g_menu_append_section(model, NULL, G_MENU_MODEL(create));
+    g_object_unref(create);
+
+    /* Only over a row: there is nothing to gather up out on the empty space
+     * below the tree. */
+    if (item_path != NULL) {
+        GMenu* group = g_menu_new();
+        append_targeted(group, "New Folder with Selection",
+                        "win.new-folder-with-selection", item_path);
+        g_menu_append_section(model, NULL, G_MENU_MODEL(group));
+        g_object_unref(group);
+    }
+
+    gtk_popover_menu_set_menu_model(GTK_POPOVER_MENU(binder->context_menu),
+                                    G_MENU_MODEL(model));
+    g_object_unref(model);
+
+    const GdkRectangle at = { (int) x, (int) y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(binder->context_menu), &at);
+    gtk_popover_popup(GTK_POPOVER(binder->context_menu));
+}
+
+/* Right-clicking deliberately leaves the selection alone. Selection is what
+ * opens a document here, so selecting the row under the pointer would mean
+ * asking for a menu quietly swapped the document being edited. The popover
+ * points at the row instead, which is what says who the menu is about. */
+static void on_secondary_click(GtkGestureClick* gesture, int n_press, double x,
+                               double y, gpointer user_data)
+{
+    (void) n_press;
+
+    BinderPanel* binder = user_data;
+    if (binder->project == NULL) {
+        return;
+    }
+
+    BinderItem* item = row_item_at(binder, x, y);
+    char* item_path = NULL;
+    char* target = NULL;
+
+    if (item != NULL) {
+        item_path = g_strdup(item->path);
+        /* New items go inside a folder, or beside a document. */
+        target = item->is_folder ? g_strdup(item->path)
+                                 : g_path_get_dirname(item->path);
+        g_object_unref(item);
+    } else {
+        target = g_strdup(wordsmith_project_manuscript_path(binder->project));
+    }
+
+    show_context_menu(binder, x, y, target, item_path);
+
+    g_free(item_path);
+    g_free(target);
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
 }
 
 /* ── tree construction ───────────────────────────────────────────────────── */
@@ -291,6 +395,23 @@ BinderPanel* binder_panel_new(void)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), list_view);
+
+    /* The popover is parented to the list view by hand, so it has to be
+     * unparented by hand too; nothing else knows it is there. */
+    binder->context_menu = gtk_popover_menu_new_from_model(NULL);
+    gtk_popover_set_has_arrow(GTK_POPOVER(binder->context_menu), FALSE);
+    gtk_widget_set_halign(binder->context_menu, GTK_ALIGN_START);
+    gtk_widget_set_parent(binder->context_menu, list_view);
+    g_signal_connect_swapped(list_view, "destroy", G_CALLBACK(gtk_widget_unparent),
+                             binder->context_menu);
+
+    /* Capture phase: the rows would otherwise take the press first. */
+    GtkGesture* secondary = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(secondary), GDK_BUTTON_SECONDARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(secondary),
+                                               GTK_PHASE_CAPTURE);
+    g_signal_connect(secondary, "pressed", G_CALLBACK(on_secondary_click), binder);
+    gtk_widget_add_controller(list_view, GTK_EVENT_CONTROLLER(secondary));
 
     binder->root = scroller;
 

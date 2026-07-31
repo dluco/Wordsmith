@@ -62,15 +62,25 @@ const WordsmithBinderNode* wordsmith_binder_node_child(
  * `name` is a user-typed title that gets sanitised into a filename. Neither
  * call rescans: follow with wordsmith_project_reload(). */
 
+/** On success `created_path`, if non-NULL, receives the new folder's path;
+ *  the caller frees it with wordsmith_free_string(). */
 int wordsmith_project_create_folder(WordsmithProject* project,
                                      const char* parent_path, const char* name,
-                                     char** error);
+                                     char** created_path, char** error);
 
 /** On success `created_path`, if non-NULL, receives the new document's path;
  *  the caller frees it with wordsmith_free_string(). */
 int wordsmith_project_create_document(WordsmithProject* project,
                                        const char* parent_path, const char* name,
                                        char** created_path, char** error);
+
+/** Move the folder or document at `source_path` into `parent_path`, keeping
+ *  its name. Both must be inside the manuscript, and a folder cannot be moved
+ *  into itself. On success `moved_path`, if non-NULL, receives the new
+ *  location. */
+int wordsmith_project_move(WordsmithProject* project, const char* source_path,
+                            const char* parent_path, char** moved_path,
+                            char** error);
 
 /* ── documents ──────────────────────────────────────────────────────────── */
 

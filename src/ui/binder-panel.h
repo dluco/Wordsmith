@@ -8,7 +8,12 @@
  *
  * The tree mirrors the manuscript folder on disk. Node handles from the core
  * do not survive a reload, so the whole model is rebuilt each time rather than
- * patched. */
+ * patched.
+ *
+ * Right-clicking raises a context menu of win.new-text-in, win.new-folder-in
+ * and win.new-folder-with-selection, each carrying the path it applies to as
+ * its action target. Those actions are installed by menu-bar.c; the panel only
+ * names them, which is what keeps it from having to know about the window. */
 typedef struct BinderPanel BinderPanel;
 
 /* Fired when the selection changes. `path` is NULL when nothing is selected. */

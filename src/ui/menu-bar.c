@@ -65,6 +65,28 @@ static void on_new_folder(GSimpleAction* action, GVariant* param, gpointer user)
     project_actions_new_folder(user);
 }
 
+/* The binder's context menu carries its target folder, or the item to gather
+ * up, in the action's parameter. */
+static void on_new_text_in(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    project_actions_new_text_in(user, g_variant_get_string(param, NULL));
+}
+
+static void on_new_folder_in(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    project_actions_new_folder_in(user, g_variant_get_string(param, NULL));
+}
+
+static void on_new_folder_with_selection(GSimpleAction* action, GVariant* param,
+                                         gpointer user)
+{
+    (void) action;
+    project_actions_new_folder_with_selection(user,
+                                              g_variant_get_string(param, NULL));
+}
+
 static void on_undo(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
@@ -208,6 +230,14 @@ static const ActionSpec ACTIONS[] = {
     { "about",            G_CALLBACK(on_about),            NULL                },
 };
 
+/* Actions taking a path. They have no menu-bar entry and no accelerator: the
+ * binder's context menu raises them with the row it was opened over. */
+static const ActionSpec TARGETED_ACTIONS[] = {
+    { "new-text-in",                G_CALLBACK(on_new_text_in),                NULL },
+    { "new-folder-in",              G_CALLBACK(on_new_folder_in),              NULL },
+    { "new-folder-with-selection",  G_CALLBACK(on_new_folder_with_selection),  NULL },
+};
+
 /* Stateful toggles for the two side panes. The window reads these back when
  * it wires up pane visibility. */
 static const char* const TOGGLE_ACTIONS[] = {
@@ -231,6 +261,15 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
             gtk_application_set_accels_for_action(app, detailed, accels);
             g_free(detailed);
         }
+    }
+
+    for (gsize index = 0; index < G_N_ELEMENTS(TARGETED_ACTIONS); index++) {
+        const ActionSpec* spec = &TARGETED_ACTIONS[index];
+
+        GSimpleAction* action = g_simple_action_new(spec->name, G_VARIANT_TYPE_STRING);
+        g_signal_connect(action, "activate", spec->callback, state);
+        g_action_map_add_action(G_ACTION_MAP(state->window), G_ACTION(action));
+        g_object_unref(action);
     }
 
     for (gsize index = 0; index < G_N_ELEMENTS(TOGGLE_ACTIONS); index++) {

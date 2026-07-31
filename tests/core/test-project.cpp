@@ -171,10 +171,13 @@ void test_create_folder_and_document()
     }
 
     const fs::path manuscript = project->manuscript_path();
-    check(project->create_folder(manuscript, "Part One", error),
+    fs::path folder;
+    check(project->create_folder(manuscript, "Part One", folder, error),
           "create folder: succeeds (" + error + ")");
     check(fs::is_directory(manuscript / "Part-One"),
           "create folder: name is sanitised");
+    check(folder == manuscript / "Part-One",
+          "create folder: reports where it landed");
 
     fs::path created;
     check(project->create_document(manuscript / "Part-One", "The Arrival!",
@@ -200,13 +203,67 @@ void test_writes_are_confined_to_the_manuscript()
         return;
     }
 
-    check(!project->create_folder(temp.path(), "escape", error),
+    fs::path created;
+    check(!project->create_folder(temp.path(), "escape", created, error),
           "confinement: a sibling directory is rejected");
     check(!project->create_folder(project->manuscript_path() / ".." / "..",
-                                  "escape", error),
+                                  "escape", created, error),
           "confinement: traversal through .. is rejected");
     check(project->contains(project->manuscript_path()),
           "confinement: the manuscript root itself is allowed");
+}
+
+void test_move_entry()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "move: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path folder;
+    fs::path nested;
+    fs::path document;
+    project->create_folder(manuscript, "Part One", folder, error);
+    project->create_folder(folder, "Chapters", nested, error);
+    project->create_document(manuscript, "Opening", document, error);
+
+    fs::path moved;
+    check(project->move_entry(document, folder, moved, error),
+          "move: a document into a folder (" + error + ")");
+    check(moved == folder / "Opening.md", "move: reports the new path");
+    check(fs::is_regular_file(moved) && !fs::exists(document),
+          "move: the file actually moved");
+
+    /* The case "New Folder with Selection" leans on: a folder moving into a
+     * sibling folder created beside it. */
+    fs::path box;
+    project->create_folder(manuscript, "Box", box, error);
+    fs::path moved_folder;
+    check(project->move_entry(folder, box, moved_folder, error),
+          "move: a folder into another folder (" + error + ")");
+    check(fs::is_directory(box / "Part-One" / "Chapters"),
+          "move: the subtree comes along");
+
+    check(!project->move_entry(box, box / "Part-One", moved, error),
+          "move: a folder cannot go inside itself");
+    check(!project->move_entry(box, box, moved, error),
+          "move: a folder cannot go inside itself directly");
+
+    fs::path duplicate_source;
+    project->create_document(manuscript, "Opening", duplicate_source, error);
+    check(!project->move_entry(duplicate_source, box / "Part-One", moved, error),
+          "move: refuses to overwrite a name already there");
+
+    check(!project->move_entry(manuscript, box, moved, error),
+          "move: the manuscript root cannot be moved");
+    check(!project->move_entry(temp.path() / "outside.md", box, moved, error),
+          "move: a source outside the manuscript is rejected");
+    check(!project->move_entry(duplicate_source, temp.path(), moved, error),
+          "move: a target outside the manuscript is rejected");
 }
 
 void test_document_read_write()
@@ -253,6 +310,7 @@ int main()
     test_binder_ordering_and_filtering();
     test_create_folder_and_document();
     test_writes_are_confined_to_the_manuscript();
+    test_move_entry();
     test_document_read_write();
     test_sanitize_name();
 

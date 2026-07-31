@@ -81,9 +81,11 @@ public:
     /** Write project.wordsmith back out. */
     bool save_settings(std::string& error) const;
 
-    /** Create a subfolder of `parent`. `parent` must be the manuscript folder
-     *  or a folder inside it. Does not rescan. */
+    /** Create a subfolder of `parent`, returning its path through
+     *  `created_path`. `parent` must be the manuscript folder or a folder
+     *  inside it. Does not rescan. */
     bool create_folder(const std::filesystem::path& parent, std::string_view name,
+                       std::filesystem::path& created_path,
                        std::string& error) const;
 
     /** Create an empty `.md` document in `parent`, returning its path through
@@ -91,6 +93,18 @@ public:
     bool create_document(const std::filesystem::path& parent, std::string_view name,
                          std::filesystem::path& created_path,
                          std::string& error) const;
+
+    /** Move `source` into `destination_parent`, keeping its name, and report
+     *  where it landed through `moved_path`.
+     *
+     *  Both ends must lie inside the manuscript folder, and a folder cannot be
+     *  moved into itself or any of its descendants — `rename` would happily
+     *  detach the subtree, so the check has to live here. Moving something to
+     *  where it already is succeeds without touching the disk. Does not
+     *  rescan. */
+    bool move_entry(const std::filesystem::path& source,
+                    const std::filesystem::path& destination_parent,
+                    std::filesystem::path& moved_path, std::string& error) const;
 
     /** True if `path` lies inside the manuscript folder. Guards the mutating
      *  calls above against a caller passing an arbitrary path. */

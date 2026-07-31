@@ -187,17 +187,22 @@ const WordsmithBinderNode* wordsmith_binder_node_child(
 
 int wordsmith_project_create_folder(WordsmithProject* project,
                                      const char* parent_path, const char* name,
-                                     char** error)
+                                     char** created_path, char** error)
 {
     if (project == nullptr || parent_path == nullptr || name == nullptr) {
         set_error(error, "missing argument");
         return 0;
     }
 
+    fs::path created;
     std::string message;
-    if (!project->project->create_folder(fs::path(parent_path), name, message)) {
+    if (!project->project->create_folder(fs::path(parent_path), name, created,
+                                         message)) {
         set_error(error, message);
         return 0;
+    }
+    if (created_path != nullptr) {
+        *created_path = duplicate(created.string());
     }
     return 1;
 }
@@ -220,6 +225,28 @@ int wordsmith_project_create_document(WordsmithProject* project,
     }
     if (created_path != nullptr) {
         *created_path = duplicate(created.string());
+    }
+    return 1;
+}
+
+int wordsmith_project_move(WordsmithProject* project, const char* source_path,
+                            const char* parent_path, char** moved_path,
+                            char** error)
+{
+    if (project == nullptr || source_path == nullptr || parent_path == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path moved;
+    std::string message;
+    if (!project->project->move_entry(fs::path(source_path), fs::path(parent_path),
+                                      moved, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (moved_path != nullptr) {
+        *moved_path = duplicate(moved.string());
     }
     return 1;
 }

@@ -7,23 +7,28 @@
 #include "core/markup-c.h"
 #include "core/project-c.h"
 
+#include <string.h>
+
 /* ── name prompt ─────────────────────────────────────────────────────────── */
 
-/* What to do with the name the user typed. */
-typedef void (*NameEnteredFn)(WordsmithUiState* state, const char* name);
+/* What to do with the name the user typed. `target` is the folder to create in,
+ * or the item to gather up, decided when the prompt opened. */
+typedef void (*NameEnteredFn)(WordsmithUiState* state, const char* name,
+                              const char* target);
 
 typedef struct NamePrompt {
     WordsmithUiState* state;
     GtkWindow*         window;
     GtkEntry*          entry;
     NameEnteredFn      on_entered;
+    char*              target;   /* owned */
 } NamePrompt;
 
 static void name_prompt_accept(NamePrompt* prompt)
 {
     const char* text = gtk_editable_get_text(GTK_EDITABLE(prompt->entry));
     if (text != NULL && text[0] != '\0') {
-        prompt->on_entered(prompt->state, text);
+        prompt->on_entered(prompt->state, text, prompt->target);
     }
     gtk_window_destroy(prompt->window);
 }
@@ -50,17 +55,25 @@ static void on_name_prompt_cancel(GtkButton* button, gpointer user_data)
 static void on_name_prompt_destroy(GtkWidget* widget, gpointer user_data)
 {
     (void) widget;
-    g_free(user_data);
+    NamePrompt* prompt = user_data;
+    g_free(prompt->target);
+    g_free(prompt);
 }
 
 /* A small modal asking for one name. GtkAlertDialog has no text entry, so this
- * is a plain window rather than anything fancier. */
+ * is a plain window rather than anything fancier. `target` is copied. */
 static void show_name_prompt(WordsmithUiState* state, const char* title,
-                             const char* placeholder, NameEnteredFn on_entered)
+                             const char* placeholder, const char* target,
+                             NameEnteredFn on_entered)
 {
+    if (target == NULL) {
+        return;
+    }
+
     NamePrompt* prompt = g_new0(NamePrompt, 1);
     prompt->state      = state;
     prompt->on_entered = on_entered;
+    prompt->target     = g_strdup(target);
 
     GtkWidget* window = gtk_window_new();
     prompt->window = GTK_WINDOW(window);
@@ -230,20 +243,30 @@ void project_actions_open_document(WordsmithUiState* state, const char* path)
 
 /* ── creating binder items ───────────────────────────────────────────────── */
 
-static void create_folder_named(WordsmithUiState* state, const char* name)
+static void create_folder_named(WordsmithUiState* state, const char* name,
+                                const char* parent)
 {
-    char* parent = binder_panel_target_folder(state->binder);
-    if (parent == NULL) {
+    char* created = NULL;
+    char* error = NULL;
+    if (!wordsmith_project_create_folder(state->project, parent, name, &created,
+                                          &error)) {
+        ui_state_report_error(state, "Could not create folder", error);
         return;
     }
 
-    char* error = NULL;
-    if (!wordsmith_project_create_folder(state->project, parent, name, &error)) {
-        ui_state_report_error(state, "Could not create folder", error);
-    } else {
-        ui_state_reload_project(state);
+    ui_state_reload_project(state);
+    if (created != NULL) {
+        binder_panel_select_path(state->binder, created);
     }
-    g_free(parent);
+    wordsmith_free_string(created);
+}
+
+void project_actions_new_folder_in(WordsmithUiState* state, const char* parent)
+{
+    if (state->project == NULL) {
+        return;
+    }
+    show_name_prompt(state, "New Folder", "Folder name", parent, create_folder_named);
 }
 
 void project_actions_new_folder(WordsmithUiState* state)
@@ -251,22 +274,19 @@ void project_actions_new_folder(WordsmithUiState* state)
     if (state->project == NULL) {
         return;
     }
-    show_name_prompt(state, "New Folder", "Folder name", create_folder_named);
+    char* parent = binder_panel_target_folder(state->binder);
+    project_actions_new_folder_in(state, parent);
+    g_free(parent);
 }
 
-static void create_text_named(WordsmithUiState* state, const char* name)
+static void create_text_named(WordsmithUiState* state, const char* name,
+                              const char* parent)
 {
-    char* parent = binder_panel_target_folder(state->binder);
-    if (parent == NULL) {
-        return;
-    }
-
     char* created = NULL;
     char* error = NULL;
     if (!wordsmith_project_create_document(state->project, parent, name, &created,
                                             &error)) {
         ui_state_report_error(state, "Could not create document", error);
-        g_free(parent);
         return;
     }
 
@@ -275,9 +295,15 @@ static void create_text_named(WordsmithUiState* state, const char* name)
         binder_panel_select_path(state->binder, created);
         project_actions_open_document(state, created);
     }
-
     wordsmith_free_string(created);
-    g_free(parent);
+}
+
+void project_actions_new_text_in(WordsmithUiState* state, const char* parent)
+{
+    if (state->project == NULL) {
+        return;
+    }
+    show_name_prompt(state, "New Text", "Document title", parent, create_text_named);
 }
 
 void project_actions_new_text(WordsmithUiState* state)
@@ -285,5 +311,84 @@ void project_actions_new_text(WordsmithUiState* state)
     if (state->project == NULL) {
         return;
     }
-    show_name_prompt(state, "New Text", "Document title", create_text_named);
+    char* parent = binder_panel_target_folder(state->binder);
+    project_actions_new_text_in(state, parent);
+    g_free(parent);
+}
+
+/* ── gathering an item into a new folder ─────────────────────────────────── */
+
+/* Where `open` ends up once `from` has been moved to `to`, or NULL if the move
+ * does not touch it. Covers both the document itself moving and a folder
+ * moving out from over it. */
+static char* remap_open_document(const char* open, const char* from, const char* to)
+{
+    if (open == NULL) {
+        return NULL;
+    }
+    if (g_strcmp0(open, from) == 0) {
+        return g_strdup(to);
+    }
+
+    char* prefix = g_strconcat(from, G_DIR_SEPARATOR_S, NULL);
+    char* moved = NULL;
+    if (g_str_has_prefix(open, prefix)) {
+        moved = g_build_filename(to, open + strlen(prefix), NULL);
+    }
+    g_free(prefix);
+    return moved;
+}
+
+static void create_folder_with_selection_named(WordsmithUiState* state,
+                                               const char* name, const char* item)
+{
+    /* Commit first: after the move the editor's path no longer exists, and
+     * saving into it would either fail or strand the text somewhere odd. */
+    project_actions_save(state);
+    char* was_open = g_strdup(editor_panel_path(state->editor));
+
+    char* parent = g_path_get_dirname(item);
+    char* folder = NULL;
+    char* error = NULL;
+    if (!wordsmith_project_create_folder(state->project, parent, name, &folder,
+                                          &error)) {
+        ui_state_report_error(state, "Could not create folder", error);
+        g_free(parent);
+        g_free(was_open);
+        return;
+    }
+
+    char* moved = NULL;
+    if (!wordsmith_project_move(state->project, item, folder, &moved, &error)) {
+        /* The folder stays: there is no delete verb yet to take it back, and
+         * an empty folder is a smaller surprise than a half-done move. */
+        ui_state_report_error(state, "Could not move the item into the new folder",
+                              error);
+    } else {
+        ui_state_reload_project(state);
+
+        char* reopen = remap_open_document(was_open, item, moved);
+        if (reopen != NULL) {
+            project_actions_open_document(state, reopen);
+            binder_panel_select_path(state->binder, reopen);
+            g_free(reopen);
+        } else {
+            binder_panel_select_path(state->binder, moved);
+        }
+    }
+
+    wordsmith_free_string(moved);
+    wordsmith_free_string(folder);
+    g_free(parent);
+    g_free(was_open);
+}
+
+void project_actions_new_folder_with_selection(WordsmithUiState* state,
+                                               const char* item)
+{
+    if (state->project == NULL) {
+        return;
+    }
+    show_name_prompt(state, "New Folder with Selection", "Folder name", item,
+                     create_folder_with_selection_named);
 }
