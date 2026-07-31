@@ -1,5 +1,6 @@
 #include "editor-panel.h"
 
+#include "core/frontmatter-c.h"
 #include "core/markup-c.h"
 #include "core/project-c.h"
 
@@ -18,6 +19,13 @@ struct EditorPanel {
 
     char*    path;      /* owned; NULL when nothing is open */
     gboolean loading;   /* suppresses the modified callback during load */
+
+    /* Everything before the Markdown body: a BOM, and the frontmatter with its
+     * fences. Owned, "" when there is none. The buffer never holds these bytes
+     * — the inspector owns that metadata — so they are kept verbatim here and
+     * put back on save. Round-tripping a file whose YAML we only half
+     * understood therefore costs the author nothing. */
+    char* prologue;
 
     GtkTextTag* inline_tags[INLINE_TAG_COUNT];
     GtkTextTag* heading_tags[MAX_HEADING_LEVEL];
@@ -209,19 +217,35 @@ static void insert_block(EditorPanel* editor, const WordsmithMarkupDocument* doc
 
 int editor_panel_load(EditorPanel* editor, const char* path, char** error)
 {
-    char* markdown = wordsmith_document_read(path, error);
-    if (markdown == NULL) {
+    char* text = wordsmith_document_read(path, error);
+    if (text == NULL) {
         return 0;
     }
 
-    WordsmithMarkupDocument* doc = wordsmith_markup_parse(markdown);
-    wordsmith_free_string(markdown);
+    /* Split off the frontmatter before the Markdown parser ever sees it: a
+     * `---` fence is also a valid thematic break, and only the core knows
+     * which one this is. */
+    WordsmithFrontmatter* frontmatter = wordsmith_frontmatter_parse(text);
+    size_t body = 0;
+    if (frontmatter != NULL) {
+        body = wordsmith_frontmatter_body_offset(frontmatter);
+        wordsmith_frontmatter_free(frontmatter);
+    }
+
+    WordsmithMarkupDocument* doc = wordsmith_markup_parse(text + body);
     if (doc == NULL) {
+        /* Nothing has been swapped in yet, so the open document is still
+         * whole. */
+        wordsmith_free_string(text);
         if (error != NULL) {
             *error = g_strdup("out of memory parsing document");
         }
         return 0;
     }
+
+    g_free(editor->prologue);
+    editor->prologue = g_strndup(text, body);
+    wordsmith_free_string(text);
 
     editor->loading = TRUE;
     gtk_text_buffer_set_text(editor->buffer, "", 0);
@@ -447,9 +471,13 @@ int editor_panel_save(EditorPanel* editor, char** error)
     char* markdown = wordsmith_markup_builder_to_markdown(builder);
     wordsmith_markup_builder_free(builder);
 
-    const int ok = wordsmith_document_write(editor->path,
-                                             markdown != NULL ? markdown : "", error);
+    /* The frontmatter goes back exactly as it came in. */
+    char* document = g_strconcat(editor->prologue != NULL ? editor->prologue : "",
+                                 markdown != NULL ? markdown : "", NULL);
     wordsmith_free_string(markdown);
+
+    const int ok = wordsmith_document_write(editor->path, document, error);
+    g_free(document);
 
     if (ok) {
         gtk_text_buffer_set_modified(editor->buffer, FALSE);
@@ -580,6 +608,7 @@ void editor_panel_free(EditorPanel* editor)
         return;
     }
     g_free(editor->path);
+    g_free(editor->prologue);
     g_free(editor);
 }
 
@@ -604,6 +633,7 @@ void editor_panel_close(EditorPanel* editor)
     editor->loading = FALSE;
 
     g_clear_pointer(&editor->path, g_free);
+    g_clear_pointer(&editor->prologue, g_free);
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), FALSE);
 }
 

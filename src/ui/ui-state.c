@@ -31,6 +31,7 @@ void ui_state_free(WordsmithUiState* state)
 void ui_state_set_project(WordsmithUiState* state, WordsmithProject* project)
 {
     editor_panel_close(state->editor);
+    inspector_panel_clear(state->inspector);
 
     wordsmith_project_free(state->project);
     state->project = project;

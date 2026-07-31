@@ -12,7 +12,11 @@
  *
  * The buffer holds one block per line, with two exceptions: a code block's
  * body spans as many lines as it has, and its fences are not in the buffer at
- * all. */
+ * all.
+ *
+ * YAML frontmatter is not in the buffer either. Loading splits it off through
+ * core/frontmatter-c.h and keeps the bytes aside; the inspector shows that
+ * metadata, and saving puts the original bytes back ahead of the body. */
 typedef struct EditorPanel EditorPanel;
 
 /* Fired when the document's modified flag changes, so the window can retitle. */

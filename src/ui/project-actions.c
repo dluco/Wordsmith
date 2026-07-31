@@ -2,6 +2,7 @@
 
 #include "binder-panel.h"
 #include "editor-panel.h"
+#include "inspector-panel.h"
 
 #include "core/markup-c.h"
 #include "core/project-c.h"
@@ -223,6 +224,7 @@ void project_actions_open_document(WordsmithUiState* state, const char* path)
         ui_state_report_error(state, "Could not open document", error);
         return;
     }
+    inspector_panel_set_document(state->inspector, path);
     ui_state_update_title(state);
 }
 

@@ -5,6 +5,9 @@ add_library(wordsmith-core STATIC
     markup-c.cpp
     project.cpp
     project-c.cpp
+    yaml.cpp
+    frontmatter.cpp
+    frontmatter-c.cpp
 )
 
 set_target_properties(wordsmith-core PROPERTIES
@@ -22,6 +25,9 @@ target_sources(wordsmith-core PUBLIC
     markup-c.h
     project.hpp
     project-c.h
+    yaml.hpp
+    frontmatter.hpp
+    frontmatter-c.h
 )
 
 target_link_libraries(wordsmith-core PRIVATE

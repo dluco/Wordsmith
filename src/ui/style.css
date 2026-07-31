@@ -12,3 +12,25 @@
 .editor-pane {
     background-color: @view_bg_color;
 }
+
+/* Inspector fields: a dimmed name over its value, so the pane scans as a list
+ * of answers rather than a form. */
+.inspector-fields {
+    margin: 12px;
+}
+
+.inspector-field-name {
+    color: alpha(currentColor, 0.55);
+    font-size: 0.85em;
+}
+
+.inspector-field-value {
+    font-size: 1.0em;
+}
+
+.inspector-heading {
+    color: alpha(currentColor, 0.55);
+    font-weight: bold;
+    font-size: 0.85em;
+    margin-top: 6px;
+}
