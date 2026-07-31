@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-/* Inline style tags, indexed by bit position in WordsworthMarkupSpanFlags. */
+/* Inline style tags, indexed by bit position in WordsmithMarkupSpanFlags. */
 #define INLINE_TAG_COUNT 4
 
 /* Deepest ATX heading Markdown allows. */
@@ -37,10 +37,10 @@ struct EditorPanel {
 static int inline_tag_index(uint32_t span_flag)
 {
     switch (span_flag) {
-    case WORDSWORTH_MARKUP_SPAN_EMPHASIS:  return 0;
-    case WORDSWORTH_MARKUP_SPAN_STRONG:    return 1;
-    case WORDSWORTH_MARKUP_SPAN_UNDERLINE: return 2;
-    case WORDSWORTH_MARKUP_SPAN_CODE:      return 3;
+    case WORDSMITH_MARKUP_SPAN_EMPHASIS:  return 0;
+    case WORDSMITH_MARKUP_SPAN_STRONG:    return 1;
+    case WORDSMITH_MARKUP_SPAN_UNDERLINE: return 2;
+    case WORDSMITH_MARKUP_SPAN_CODE:      return 3;
     default:                               return -1;
     }
 }
@@ -111,12 +111,12 @@ static void apply_to_block(EditorPanel* editor, GtkTextTag* tag, int start_offse
     gtk_text_buffer_apply_tag(editor->buffer, tag, &start, &end);
 }
 
-static void insert_spans(EditorPanel* editor, const WordsworthMarkupDocument* doc,
+static void insert_spans(EditorPanel* editor, const WordsmithMarkupDocument* doc,
                          size_t block)
 {
-    const size_t span_count = wordsworth_markup_block_span_count(doc, block);
+    const size_t span_count = wordsmith_markup_block_span_count(doc, block);
     for (size_t index = 0; index < span_count; index++) {
-        WordsworthMarkupSpan span = wordsworth_markup_block_span(doc, block, index);
+        WordsmithMarkupSpan span = wordsmith_markup_block_span(doc, block, index);
 
         GtkTextIter end;
         gtk_text_buffer_get_end_iter(editor->buffer, &end);
@@ -137,17 +137,17 @@ static void insert_spans(EditorPanel* editor, const WordsworthMarkupDocument* do
     }
 }
 
-static void insert_block(EditorPanel* editor, const WordsworthMarkupDocument* doc,
+static void insert_block(EditorPanel* editor, const WordsmithMarkupDocument* doc,
                          size_t block)
 {
-    const WordsworthMarkupBlockInfo info = wordsworth_markup_block_info(doc, block);
+    const WordsmithMarkupBlockInfo info = wordsmith_markup_block_info(doc, block);
 
     GtkTextIter end;
     gtk_text_buffer_get_end_iter(editor->buffer, &end);
     const int start_offset = gtk_text_iter_get_offset(&end);
 
     switch (info.kind) {
-    case WORDSWORTH_MARKUP_HEADING: {
+    case WORDSMITH_MARKUP_HEADING: {
         int level = info.level < 1 ? 1 : info.level;
         if (level > MAX_HEADING_LEVEL) {
             level = MAX_HEADING_LEVEL;
@@ -157,19 +157,19 @@ static void insert_block(EditorPanel* editor, const WordsworthMarkupDocument* do
         break;
     }
 
-    case WORDSWORTH_MARKUP_QUOTE:
+    case WORDSMITH_MARKUP_QUOTE:
         insert_spans(editor, doc, block);
         apply_to_block(editor, editor->quote_tag, start_offset);
         break;
 
-    case WORDSWORTH_MARKUP_CODE_BLOCK: {
-        const char* code = wordsworth_markup_block_code(doc, block);
+    case WORDSMITH_MARKUP_CODE_BLOCK: {
+        const char* code = wordsmith_markup_block_code(doc, block);
         gtk_text_buffer_insert(editor->buffer, &end, code, -1);
         apply_to_block(editor, editor->code_block_tag, start_offset);
         break;
     }
 
-    case WORDSWORTH_MARKUP_LIST_ITEM: {
+    case WORDSMITH_MARKUP_LIST_ITEM: {
         /* The marker is inserted as text so the list is legible, then tagged
          * so save() can tell it apart from what the author typed. */
         char marker[24];
@@ -195,13 +195,13 @@ static void insert_block(EditorPanel* editor, const WordsworthMarkupDocument* do
         break;
     }
 
-    case WORDSWORTH_MARKUP_RULE:
+    case WORDSMITH_MARKUP_RULE:
         /* Rules have no spans. The visible text doubles as what save() reads
          * back, since a lone "---" line re-parses as a rule. */
         gtk_text_buffer_insert(editor->buffer, &end, "---", -1);
         break;
 
-    case WORDSWORTH_MARKUP_PARAGRAPH:
+    case WORDSMITH_MARKUP_PARAGRAPH:
         insert_spans(editor, doc, block);
         break;
     }
@@ -209,13 +209,13 @@ static void insert_block(EditorPanel* editor, const WordsworthMarkupDocument* do
 
 int editor_panel_load(EditorPanel* editor, const char* path, char** error)
 {
-    char* markdown = wordsworth_document_read(path, error);
+    char* markdown = wordsmith_document_read(path, error);
     if (markdown == NULL) {
         return 0;
     }
 
-    WordsworthMarkupDocument* doc = wordsworth_markup_parse(markdown);
-    wordsworth_free_string(markdown);
+    WordsmithMarkupDocument* doc = wordsmith_markup_parse(markdown);
+    wordsmith_free_string(markdown);
     if (doc == NULL) {
         if (error != NULL) {
             *error = g_strdup("out of memory parsing document");
@@ -226,7 +226,7 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     editor->loading = TRUE;
     gtk_text_buffer_set_text(editor->buffer, "", 0);
 
-    const size_t block_count = wordsworth_markup_block_count(doc);
+    const size_t block_count = wordsmith_markup_block_count(doc);
     for (size_t block = 0; block < block_count; block++) {
         if (block > 0) {
             GtkTextIter end;
@@ -236,7 +236,7 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
         insert_block(editor, doc, block);
     }
 
-    wordsworth_markup_document_free(doc);
+    wordsmith_markup_document_free(doc);
 
     g_free(editor->path);
     editor->path = g_strdup(path);
@@ -255,36 +255,36 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
 
 /* Which block kind a line carries, read from the tags at its first character. */
 typedef struct LineKind {
-    WordsworthMarkupBlockKind kind;
+    WordsmithMarkupBlockKind kind;
     int                       level;
 } LineKind;
 
 static LineKind line_kind(EditorPanel* editor, const GtkTextIter* line_start)
 {
-    LineKind out = { WORDSWORTH_MARKUP_PARAGRAPH, 0 };
+    LineKind out = { WORDSMITH_MARKUP_PARAGRAPH, 0 };
 
     for (int level = 0; level < MAX_HEADING_LEVEL; level++) {
         if (gtk_text_iter_has_tag(line_start, editor->heading_tags[level])) {
-            out.kind  = WORDSWORTH_MARKUP_HEADING;
+            out.kind  = WORDSMITH_MARKUP_HEADING;
             out.level = level + 1;
             return out;
         }
     }
     if (gtk_text_iter_has_tag(line_start, editor->code_block_tag)) {
-        out.kind = WORDSWORTH_MARKUP_CODE_BLOCK;
+        out.kind = WORDSMITH_MARKUP_CODE_BLOCK;
         return out;
     }
     if (gtk_text_iter_has_tag(line_start, editor->quote_tag)) {
-        out.kind = WORDSWORTH_MARKUP_QUOTE;
+        out.kind = WORDSMITH_MARKUP_QUOTE;
         return out;
     }
     if (gtk_text_iter_has_tag(line_start, editor->ordered_tag)) {
-        out.kind    = WORDSWORTH_MARKUP_LIST_ITEM;
+        out.kind    = WORDSMITH_MARKUP_LIST_ITEM;
         out.level   = 1;   /* ordered, recorded in `level` for the caller */
         return out;
     }
     if (gtk_text_iter_has_tag(line_start, editor->bullet_tag)) {
-        out.kind  = WORDSWORTH_MARKUP_LIST_ITEM;
+        out.kind  = WORDSMITH_MARKUP_LIST_ITEM;
         out.level = 0;
         return out;
     }
@@ -294,7 +294,7 @@ static LineKind line_kind(EditorPanel* editor, const GtkTextIter* line_start)
 /* Emit the spans between `start` and `end`, splitting wherever the set of
  * inline tags changes. Marker text is skipped. */
 static void add_spans_for_range(EditorPanel* editor,
-                                WordsworthMarkupBuilder* builder,
+                                WordsmithMarkupBuilder* builder,
                                 const GtkTextIter* start, const GtkTextIter* end)
 {
     GtkTextIter cursor = *start;
@@ -319,7 +319,7 @@ static void add_spans_for_range(EditorPanel* editor,
             char* text = gtk_text_buffer_get_text(editor->buffer, &cursor, &run_end,
                                                   FALSE);
             if (text != NULL && text[0] != '\0') {
-                wordsworth_markup_builder_add_span(builder, text, flags, NULL);
+                wordsmith_markup_builder_add_span(builder, text, flags, NULL);
             }
             g_free(text);
         }
@@ -330,7 +330,7 @@ static void add_spans_for_range(EditorPanel* editor,
 
 /* Gather the run of code-block lines starting at `line`, emit it as one block,
  * and return the first line after it. */
-static int emit_code_block(EditorPanel* editor, WordsworthMarkupBuilder* builder,
+static int emit_code_block(EditorPanel* editor, WordsmithMarkupBuilder* builder,
                            int line, int line_count)
 {
     GString* code = g_string_new(NULL);
@@ -339,7 +339,7 @@ static int emit_code_block(EditorPanel* editor, WordsworthMarkupBuilder* builder
     while (current < line_count) {
         GtkTextIter start;
         gtk_text_buffer_get_iter_at_line(editor->buffer, &start, current);
-        if (line_kind(editor, &start).kind != WORDSWORTH_MARKUP_CODE_BLOCK) {
+        if (line_kind(editor, &start).kind != WORDSMITH_MARKUP_CODE_BLOCK) {
             break;
         }
 
@@ -356,8 +356,8 @@ static int emit_code_block(EditorPanel* editor, WordsworthMarkupBuilder* builder
         current++;
     }
 
-    wordsworth_markup_builder_begin_block(builder, WORDSWORTH_MARKUP_CODE_BLOCK, 0);
-    wordsworth_markup_builder_set_code(builder, code->str, NULL);
+    wordsmith_markup_builder_begin_block(builder, WORDSMITH_MARKUP_CODE_BLOCK, 0);
+    wordsmith_markup_builder_set_code(builder, code->str, NULL);
     g_string_free(code, TRUE);
     return current;
 }
@@ -368,7 +368,7 @@ int editor_panel_save(EditorPanel* editor, char** error)
         return 1;
     }
 
-    WordsworthMarkupBuilder* builder = wordsworth_markup_builder_new();
+    WordsmithMarkupBuilder* builder = wordsmith_markup_builder_new();
     if (builder == NULL) {
         if (error != NULL) {
             *error = g_strdup("out of memory building document");
@@ -391,7 +391,7 @@ int editor_panel_save(EditorPanel* editor, char** error)
 
         const LineKind kind = line_kind(editor, &start);
 
-        if (kind.kind == WORDSWORTH_MARKUP_CODE_BLOCK) {
+        if (kind.kind == WORDSMITH_MARKUP_CODE_BLOCK) {
             line = emit_code_block(editor, builder, line, line_count);
             previous_was_ordered = FALSE;
             continue;
@@ -404,39 +404,39 @@ int editor_panel_save(EditorPanel* editor, char** error)
         const gboolean is_rule = raw != NULL && strcmp(raw, "---") == 0;
         g_free(raw);
 
-        if (blank && kind.kind == WORDSWORTH_MARKUP_PARAGRAPH) {
+        if (blank && kind.kind == WORDSMITH_MARKUP_PARAGRAPH) {
             previous_was_ordered = FALSE;
             line++;
             continue;
         }
 
-        if (is_rule && kind.kind == WORDSWORTH_MARKUP_PARAGRAPH) {
-            wordsworth_markup_builder_begin_block(builder, WORDSWORTH_MARKUP_RULE, 0);
+        if (is_rule && kind.kind == WORDSMITH_MARKUP_PARAGRAPH) {
+            wordsmith_markup_builder_begin_block(builder, WORDSMITH_MARKUP_RULE, 0);
             previous_was_ordered = FALSE;
             line++;
             continue;
         }
 
-        if (kind.kind == WORDSWORTH_MARKUP_LIST_ITEM) {
+        if (kind.kind == WORDSMITH_MARKUP_LIST_ITEM) {
             const gboolean ordered = kind.level == 1;
             if (!ordered || !previous_was_ordered) {
                 list_number = 1;
             }
-            wordsworth_markup_builder_begin_block(builder,
-                                                  WORDSWORTH_MARKUP_LIST_ITEM, 0);
+            wordsmith_markup_builder_begin_block(builder,
+                                                  WORDSMITH_MARKUP_LIST_ITEM, 0);
             /* begin_block takes nesting depth in `level`; ordering and the
              * running number are set through the marker we regenerate here. */
             if (ordered) {
                 char marker[24];
                 g_snprintf(marker, sizeof(marker), "%d. ", list_number);
                 list_number++;
-                wordsworth_markup_builder_add_span(builder, marker, 0, NULL);
+                wordsmith_markup_builder_add_span(builder, marker, 0, NULL);
             } else {
-                wordsworth_markup_builder_add_span(builder, "- ", 0, NULL);
+                wordsmith_markup_builder_add_span(builder, "- ", 0, NULL);
             }
             previous_was_ordered = ordered;
         } else {
-            wordsworth_markup_builder_begin_block(builder, kind.kind, kind.level);
+            wordsmith_markup_builder_begin_block(builder, kind.kind, kind.level);
             previous_was_ordered = FALSE;
         }
 
@@ -444,12 +444,12 @@ int editor_panel_save(EditorPanel* editor, char** error)
         line++;
     }
 
-    char* markdown = wordsworth_markup_builder_to_markdown(builder);
-    wordsworth_markup_builder_free(builder);
+    char* markdown = wordsmith_markup_builder_to_markdown(builder);
+    wordsmith_markup_builder_free(builder);
 
-    const int ok = wordsworth_document_write(editor->path,
+    const int ok = wordsmith_document_write(editor->path,
                                              markdown != NULL ? markdown : "", error);
-    wordsworth_free_string(markdown);
+    wordsmith_free_string(markdown);
 
     if (ok) {
         gtk_text_buffer_set_modified(editor->buffer, FALSE);

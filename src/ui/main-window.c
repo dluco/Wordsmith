@@ -18,7 +18,7 @@
  * where new items will be created. */
 static void on_binder_selected(const char* path, int is_folder, void* user_data)
 {
-    WordsworthUiState* state = user_data;
+    WordsmithUiState* state = user_data;
     if (path == NULL || is_folder) {
         return;
     }
@@ -48,7 +48,7 @@ static void on_window_destroy(GtkWidget* widget, gpointer user_data)
 
 void main_window_present(GtkApplication* app, const char* initial_project)
 {
-    WordsworthUiState* state = ui_state_new();
+    WordsmithUiState* state = ui_state_new();
     state->app = app;
 
     GtkWidget* window = gtk_application_window_new(app);

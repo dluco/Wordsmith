@@ -12,7 +12,7 @@
 
 namespace fs = std::filesystem;
 
-namespace wordsworth {
+namespace wordsmith {
 
 namespace {
 
@@ -126,7 +126,7 @@ std::unique_ptr<Project> Project::open(const fs::path& root, std::string& error)
     auto version = fields.find("version");
     if (version != fields.end() && version->second.is_number()
         && version->second.get_integer() > PROJECT_FORMAT_VERSION) {
-        error = "project was written by a newer version of Wordsworth";
+        error = "project was written by a newer version of Wordsmith";
         return nullptr;
     }
 
@@ -339,4 +339,4 @@ std::string sanitize_name(std::string_view title)
     return out.empty() ? "untitled" : out;
 }
 
-} // namespace wordsworth
+} // namespace wordsmith

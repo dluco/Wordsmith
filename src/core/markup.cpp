@@ -7,7 +7,7 @@
 
 #include <cctype>
 
-namespace wordsworth::markup {
+namespace wordsmith::markup {
 
 namespace {
 
@@ -325,11 +325,11 @@ bool is_heading(std::string_view stripped, int& level, std::string_view& text)
     level = static_cast<int>(hashes);
     std::string_view rest = stripped.substr(hashes);
     // Strip the leading space and any trailing '#'s.
-    rest = wordsworth::markup::strip(rest);
+    rest = wordsmith::markup::strip(rest);
     while (!rest.empty() && rest.back() == '#') {
         rest.remove_suffix(1);
     }
-    text = wordsworth::markup::rstrip(rest);
+    text = wordsmith::markup::rstrip(rest);
     return true;
 }
 
@@ -759,4 +759,4 @@ std::string serialize(const Document& document)
     return out;
 }
 
-} // namespace wordsworth::markup
+} // namespace wordsmith::markup

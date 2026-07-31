@@ -1,7 +1,7 @@
 //
 // The project model.
 //
-// A Wordsworth project is an ordinary directory containing a `project.wordsworth`
+// A Wordsmith project is an ordinary directory containing a `project.wordsmith`
 // JSON file and a manuscript folder of Markdown files. The filesystem is the
 // source of truth for the binder: the JSON names the manuscript folder and
 // carries project-wide settings, but it does not enumerate documents.
@@ -9,13 +9,13 @@
 // That choice is deliberate but not permanent. Scrivener and Ulysses index
 // everything in a central file, which is what lets them do manual reordering
 // and per-document metadata; editors like Obsidian and iA Writer let the
-// directory speak for itself. Wordsworth starts as the second kind. The seam
+// directory speak for itself. Wordsmith starts as the second kind. The seam
 // for changing that is `load_binder()`: swap its implementation and everything
 // above keeps working.
 //
 
-#ifndef WORDSWORTH_PROJECT_HPP
-#define WORDSWORTH_PROJECT_HPP
+#ifndef WORDSMITH_PROJECT_HPP
+#define WORDSMITH_PROJECT_HPP
 
 #include <filesystem>
 #include <memory>
@@ -23,11 +23,11 @@
 #include <string_view>
 #include <vector>
 
-namespace wordsworth {
+namespace wordsmith {
 
 /* The file naming a directory as a project, and the default manuscript folder
  * created inside a new one. */
-inline constexpr const char* PROJECT_FILE_NAME = "project.wordsworth";
+inline constexpr const char* PROJECT_FILE_NAME = "project.wordsmith";
 inline constexpr const char* DEFAULT_MANUSCRIPT_FOLDER = "manuscript";
 inline constexpr const char* DOCUMENT_EXTENSION = ".md";
 
@@ -58,7 +58,7 @@ BinderEntry load_binder(const std::filesystem::path& manuscript_root);
 class Project {
 public:
     /** Open the project rooted at `root`, the directory holding
-     *  project.wordsworth. */
+     *  project.wordsmith. */
     static std::unique_ptr<Project> open(const std::filesystem::path& root,
                                          std::string& error);
 
@@ -78,7 +78,7 @@ public:
     /** Rescan the manuscript folder. Call after anything changes on disk. */
     void reload_binder();
 
-    /** Write project.wordsworth back out. */
+    /** Write project.wordsmith back out. */
     bool save_settings(std::string& error) const;
 
     /** Create a subfolder of `parent`. `parent` must be the manuscript folder
@@ -118,6 +118,6 @@ bool write_document(const std::filesystem::path& path, std::string_view markdown
  *  "untitled" if nothing usable survives. */
 std::string sanitize_name(std::string_view title);
 
-} // namespace wordsworth
+} // namespace wordsmith
 
-#endif /* WORDSWORTH_PROJECT_HPP */
+#endif /* WORDSMITH_PROJECT_HPP */

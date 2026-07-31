@@ -7,12 +7,12 @@
 
 #include "core/markup-c.h"
 
-WordsworthUiState* ui_state_new(void)
+WordsmithUiState* ui_state_new(void)
 {
-    return g_new0(WordsworthUiState, 1);
+    return g_new0(WordsmithUiState, 1);
 }
 
-void ui_state_free(WordsworthUiState* state)
+void ui_state_free(WordsmithUiState* state)
 {
     if (state == NULL) {
         return;
@@ -23,47 +23,47 @@ void ui_state_free(WordsworthUiState* state)
     editor_panel_free(state->editor);
     inspector_panel_free(state->inspector);
 
-    wordsworth_project_free(state->project);
+    wordsmith_project_free(state->project);
 
     g_free(state);
 }
 
-void ui_state_set_project(WordsworthUiState* state, WordsworthProject* project)
+void ui_state_set_project(WordsmithUiState* state, WordsmithProject* project)
 {
     editor_panel_close(state->editor);
 
-    wordsworth_project_free(state->project);
+    wordsmith_project_free(state->project);
     state->project = project;
 
     binder_panel_set_project(state->binder, project);
     ui_state_update_title(state);
 }
 
-void ui_state_reload_project(WordsworthUiState* state)
+void ui_state_reload_project(WordsmithUiState* state)
 {
     if (state->project == NULL) {
         return;
     }
-    wordsworth_project_reload(state->project);
+    wordsmith_project_reload(state->project);
     binder_panel_reload(state->binder);
 }
 
-void ui_state_update_title(WordsworthUiState* state)
+void ui_state_update_title(WordsmithUiState* state)
 {
     if (state->window == NULL) {
         return;
     }
 
     if (state->project == NULL) {
-        gtk_window_set_title(state->window, "Wordsworth");
+        gtk_window_set_title(state->window, "Wordsmith");
         return;
     }
 
-    const char* project_title = wordsworth_project_title(state->project);
+    const char* project_title = wordsmith_project_title(state->project);
     const char* document_path = editor_panel_path(state->editor);
 
     if (document_path == NULL) {
-        char* title = g_strdup_printf("%s - Wordsworth", project_title);
+        char* title = g_strdup_printf("%s - Wordsmith", project_title);
         gtk_window_set_title(state->window, title);
         g_free(title);
         return;
@@ -76,7 +76,7 @@ void ui_state_update_title(WordsworthUiState* state)
         *dot = '\0';
     }
 
-    char* title = g_strdup_printf("%s%s - %s - Wordsworth",
+    char* title = g_strdup_printf("%s%s - %s - Wordsmith",
                                   editor_panel_is_modified(state->editor) ? "*" : "",
                                   base, project_title);
     gtk_window_set_title(state->window, title);
@@ -84,7 +84,7 @@ void ui_state_update_title(WordsworthUiState* state)
     g_free(base);
 }
 
-void ui_state_report_error(WordsworthUiState* state, const char* message,
+void ui_state_report_error(WordsmithUiState* state, const char* message,
                            char* detail)
 {
     GtkAlertDialog* dialog = gtk_alert_dialog_new("%s", message);
@@ -94,5 +94,5 @@ void ui_state_report_error(WordsworthUiState* state, const char* message,
     gtk_alert_dialog_show(dialog, state != NULL ? state->window : NULL);
     g_object_unref(dialog);
 
-    wordsworth_free_string(detail);
+    wordsmith_free_string(detail);
 }

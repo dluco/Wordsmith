@@ -9,10 +9,10 @@
 /* ── name prompt ─────────────────────────────────────────────────────────── */
 
 /* What to do with the name the user typed. */
-typedef void (*NameEnteredFn)(WordsworthUiState* state, const char* name);
+typedef void (*NameEnteredFn)(WordsmithUiState* state, const char* name);
 
 typedef struct NamePrompt {
-    WordsworthUiState* state;
+    WordsmithUiState* state;
     GtkWindow*         window;
     GtkEntry*          entry;
     NameEnteredFn      on_entered;
@@ -54,7 +54,7 @@ static void on_name_prompt_destroy(GtkWidget* widget, gpointer user_data)
 
 /* A small modal asking for one name. GtkAlertDialog has no text entry, so this
  * is a plain window rather than anything fancier. */
-static void show_name_prompt(WordsworthUiState* state, const char* title,
+static void show_name_prompt(WordsmithUiState* state, const char* title,
                              const char* placeholder, NameEnteredFn on_entered)
 {
     NamePrompt* prompt = g_new0(NamePrompt, 1);
@@ -103,10 +103,10 @@ static void show_name_prompt(WordsworthUiState* state, const char* title,
 
 /* ── opening and creating projects ───────────────────────────────────────── */
 
-void project_actions_open_path(WordsworthUiState* state, const char* root)
+void project_actions_open_path(WordsmithUiState* state, const char* root)
 {
     char* error = NULL;
-    WordsworthProject* project = wordsworth_project_open(root, &error);
+    WordsmithProject* project = wordsmith_project_open(root, &error);
     if (project == NULL) {
         ui_state_report_error(state, "Could not open project", error);
         return;
@@ -117,7 +117,7 @@ void project_actions_open_path(WordsworthUiState* state, const char* root)
 static void on_open_folder_chosen(GObject* source, GAsyncResult* result,
                                   gpointer user_data)
 {
-    WordsworthUiState* state = user_data;
+    WordsmithUiState* state = user_data;
     GError* error = NULL;
 
     GFile* folder = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(source),
@@ -136,7 +136,7 @@ static void on_open_folder_chosen(GObject* source, GAsyncResult* result,
     g_object_unref(folder);
 }
 
-void project_actions_open_dialog(WordsworthUiState* state)
+void project_actions_open_dialog(WordsmithUiState* state)
 {
     GtkFileDialog* dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Open Project");
@@ -148,7 +148,7 @@ void project_actions_open_dialog(WordsworthUiState* state)
 static void on_new_folder_chosen(GObject* source, GAsyncResult* result,
                                  gpointer user_data)
 {
-    WordsworthUiState* state = user_data;
+    WordsmithUiState* state = user_data;
     GError* error = NULL;
 
     GFile* folder = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(source),
@@ -162,7 +162,7 @@ static void on_new_folder_chosen(GObject* source, GAsyncResult* result,
     if (path != NULL) {
         char* basename = g_path_get_basename(path);
         char* message = NULL;
-        WordsworthProject* project = wordsworth_project_create(path, basename,
+        WordsmithProject* project = wordsmith_project_create(path, basename,
                                                                &message);
         if (project == NULL) {
             ui_state_report_error(state, "Could not create project", message);
@@ -175,7 +175,7 @@ static void on_new_folder_chosen(GObject* source, GAsyncResult* result,
     g_object_unref(folder);
 }
 
-void project_actions_new_dialog(WordsworthUiState* state)
+void project_actions_new_dialog(WordsmithUiState* state)
 {
     /* The chooser creates or picks the directory; the project file and the
      * manuscript folder go inside whatever comes back. */
@@ -186,7 +186,7 @@ void project_actions_new_dialog(WordsworthUiState* state)
     g_object_unref(dialog);
 }
 
-void project_actions_close(WordsworthUiState* state)
+void project_actions_close(WordsmithUiState* state)
 {
     project_actions_save(state);
     ui_state_set_project(state, NULL);
@@ -194,7 +194,7 @@ void project_actions_close(WordsworthUiState* state)
 
 /* ── documents ───────────────────────────────────────────────────────────── */
 
-void project_actions_save(WordsworthUiState* state)
+void project_actions_save(WordsmithUiState* state)
 {
     if (!editor_panel_is_modified(state->editor)) {
         return;
@@ -208,7 +208,7 @@ void project_actions_save(WordsworthUiState* state)
     ui_state_update_title(state);
 }
 
-void project_actions_open_document(WordsworthUiState* state, const char* path)
+void project_actions_open_document(WordsmithUiState* state, const char* path)
 {
     if (path == NULL || g_strcmp0(path, editor_panel_path(state->editor)) == 0) {
         return;
@@ -228,7 +228,7 @@ void project_actions_open_document(WordsworthUiState* state, const char* path)
 
 /* ── creating binder items ───────────────────────────────────────────────── */
 
-static void create_folder_named(WordsworthUiState* state, const char* name)
+static void create_folder_named(WordsmithUiState* state, const char* name)
 {
     char* parent = binder_panel_target_folder(state->binder);
     if (parent == NULL) {
@@ -236,7 +236,7 @@ static void create_folder_named(WordsworthUiState* state, const char* name)
     }
 
     char* error = NULL;
-    if (!wordsworth_project_create_folder(state->project, parent, name, &error)) {
+    if (!wordsmith_project_create_folder(state->project, parent, name, &error)) {
         ui_state_report_error(state, "Could not create folder", error);
     } else {
         ui_state_reload_project(state);
@@ -244,7 +244,7 @@ static void create_folder_named(WordsworthUiState* state, const char* name)
     g_free(parent);
 }
 
-void project_actions_new_folder(WordsworthUiState* state)
+void project_actions_new_folder(WordsmithUiState* state)
 {
     if (state->project == NULL) {
         return;
@@ -252,7 +252,7 @@ void project_actions_new_folder(WordsworthUiState* state)
     show_name_prompt(state, "New Folder", "Folder name", create_folder_named);
 }
 
-static void create_text_named(WordsworthUiState* state, const char* name)
+static void create_text_named(WordsmithUiState* state, const char* name)
 {
     char* parent = binder_panel_target_folder(state->binder);
     if (parent == NULL) {
@@ -261,7 +261,7 @@ static void create_text_named(WordsworthUiState* state, const char* name)
 
     char* created = NULL;
     char* error = NULL;
-    if (!wordsworth_project_create_document(state->project, parent, name, &created,
+    if (!wordsmith_project_create_document(state->project, parent, name, &created,
                                             &error)) {
         ui_state_report_error(state, "Could not create document", error);
         g_free(parent);
@@ -274,11 +274,11 @@ static void create_text_named(WordsworthUiState* state, const char* name)
         project_actions_open_document(state, created);
     }
 
-    wordsworth_free_string(created);
+    wordsmith_free_string(created);
     g_free(parent);
 }
 
-void project_actions_new_text(WordsworthUiState* state)
+void project_actions_new_text(WordsmithUiState* state)
 {
     if (state->project == NULL) {
         return;

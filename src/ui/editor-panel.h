@@ -29,7 +29,7 @@ void editor_panel_set_modified_callback(EditorPanel* editor,
                                         void* user_data);
 
 /** Load `path` into the view. Returns 0 and fills `error` (owned by the
- *  caller, freed with wordsworth_free_string) on failure. */
+ *  caller, freed with wordsmith_free_string) on failure. */
 int editor_panel_load(EditorPanel* editor, const char* path, char** error);
 
 /** Write the buffer back to the open document. Returns 0 and fills `error` on
@@ -44,7 +44,7 @@ const char* editor_panel_path(EditorPanel* editor);
 
 gboolean editor_panel_is_modified(EditorPanel* editor);
 
-/** Toggle one WORDSWORTH_MARKUP_SPAN_* style over the selection. Does nothing
+/** Toggle one WORDSMITH_MARKUP_SPAN_* style over the selection. Does nothing
  *  when the selection is empty. */
 void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag);
 

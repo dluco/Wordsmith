@@ -4,10 +4,10 @@
 #include <iostream>
 #include <string>
 
-using wordsworth::markup::Block;
-using wordsworth::markup::BlockKind;
-using wordsworth::markup::Document;
-using wordsworth::markup::Span;
+using wordsmith::markup::Block;
+using wordsmith::markup::BlockKind;
+using wordsmith::markup::Document;
+using wordsmith::markup::Span;
 
 namespace {
 
@@ -35,17 +35,17 @@ void check_equal(const std::string& actual, const std::string& expected,
  * nothing. That is the property the editor's save path depends on. */
 void check_stable(const std::string& markdown, const std::string& what)
 {
-    const std::string once = wordsworth::markup::serialize(
-        wordsworth::markup::parse(markdown));
-    const std::string twice = wordsworth::markup::serialize(
-        wordsworth::markup::parse(once));
+    const std::string once = wordsmith::markup::serialize(
+        wordsmith::markup::parse(markdown));
+    const std::string twice = wordsmith::markup::serialize(
+        wordsmith::markup::parse(once));
     check_equal(twice, once, what + " (round trip is not stable)");
 }
 
 void test_inline_styles()
 {
     const std::vector<Span> spans =
-        wordsworth::markup::parse_inline("plain **bold** and *italic*");
+        wordsmith::markup::parse_inline("plain **bold** and *italic*");
 
     check(spans.size() == 4, "inline: four runs");
     if (spans.size() != 4) {
@@ -60,7 +60,7 @@ void test_inline_styles()
 void test_underline()
 {
     const std::vector<Span> spans =
-        wordsworth::markup::parse_inline("a <u>marked</u> word");
+        wordsmith::markup::parse_inline("a <u>marked</u> word");
 
     check(spans.size() == 3, "underline: three runs");
     if (spans.size() != 3) {
@@ -68,7 +68,7 @@ void test_underline()
     }
     check(spans[1].text == "marked" && spans[1].underline, "underline: middle run");
 
-    check_equal(wordsworth::markup::serialize_inline(spans),
+    check_equal(wordsmith::markup::serialize_inline(spans),
                 "a <u>marked</u> word", "underline: serializes back");
 }
 
@@ -77,7 +77,7 @@ void test_underline()
 void test_underline_does_not_eat_autolinks()
 {
     const std::vector<Span> spans =
-        wordsworth::markup::parse_inline("see <https://example.com> now");
+        wordsmith::markup::parse_inline("see <https://example.com> now");
 
     bool found_link = false;
     for (const Span& span : spans) {
@@ -97,8 +97,8 @@ void test_escaping()
     block.spans.push_back(span);
     doc.blocks.push_back(block);
 
-    const std::string markdown = wordsworth::markup::serialize(doc);
-    const Document reparsed = wordsworth::markup::parse(markdown);
+    const std::string markdown = wordsmith::markup::serialize(doc);
+    const Document reparsed = wordsmith::markup::parse(markdown);
 
     check(reparsed.blocks.size() == 1, "escaping: one block survives");
     if (reparsed.blocks.size() != 1 || reparsed.blocks[0].spans.empty()) {
@@ -119,14 +119,14 @@ void test_prose_is_not_over_escaped()
     block.spans.push_back(span);
     doc.blocks.push_back(block);
 
-    check_equal(wordsworth::markup::serialize(doc),
+    check_equal(wordsmith::markup::serialize(doc),
                 "Don't stop (really) - it's fine.\n",
                 "prose: ordinary punctuation is left alone");
 }
 
 void test_heading_round_trip()
 {
-    const Document doc = wordsworth::markup::parse("## Chapter *One*\n");
+    const Document doc = wordsmith::markup::parse("## Chapter *One*\n");
 
     check(doc.blocks.size() == 1, "heading: one block");
     if (doc.blocks.empty()) {
@@ -135,7 +135,7 @@ void test_heading_round_trip()
     check(doc.blocks[0].kind == BlockKind::Heading, "heading: kind");
     check(doc.blocks[0].level == 2, "heading: level");
 
-    check_equal(wordsworth::markup::serialize(doc), "## Chapter *One*\n",
+    check_equal(wordsmith::markup::serialize(doc), "## Chapter *One*\n",
                 "heading: serializes back");
 }
 
@@ -157,18 +157,18 @@ void test_document_round_trip()
         "\n"
         "---\n";
 
-    const Document doc = wordsworth::markup::parse(source);
+    const Document doc = wordsmith::markup::parse(source);
     check(doc.blocks.size() == 8, "document: block count");
 
     check_stable(source, "document");
-    check_equal(wordsworth::markup::serialize(doc), source,
+    check_equal(wordsmith::markup::serialize(doc), source,
                 "document: serializes back byte for byte");
 }
 
 void test_code_block_round_trip()
 {
     const std::string source = "```c\nint main(void) { return 0; }\n```\n";
-    const Document doc = wordsworth::markup::parse(source);
+    const Document doc = wordsmith::markup::parse(source);
 
     check(doc.blocks.size() == 1, "code: one block");
     if (doc.blocks.empty()) {
@@ -176,7 +176,7 @@ void test_code_block_round_trip()
     }
     check(doc.blocks[0].kind == BlockKind::CodeBlock, "code: kind");
     check_equal(doc.blocks[0].language, "c", "code: language");
-    check_equal(wordsworth::markup::serialize(doc), source, "code: serializes back");
+    check_equal(wordsmith::markup::serialize(doc), source, "code: serializes back");
 }
 
 /* A wrapped paragraph folds into one block, so the re-emitted line is longer
@@ -184,7 +184,7 @@ void test_code_block_round_trip()
 void test_wrapped_paragraph_folds_once()
 {
     const std::string source = "The snow came early\nthat year.\n";
-    check_equal(wordsworth::markup::serialize(wordsworth::markup::parse(source)),
+    check_equal(wordsmith::markup::serialize(wordsmith::markup::parse(source)),
                 "The snow came early that year.\n",
                 "wrapping: folds to a single line");
     check_stable(source, "wrapped paragraph");
@@ -192,8 +192,8 @@ void test_wrapped_paragraph_folds_once()
 
 void test_empty()
 {
-    check(wordsworth::markup::parse("").blocks.empty(), "empty: no blocks");
-    check_equal(wordsworth::markup::serialize(Document{}), "",
+    check(wordsmith::markup::parse("").blocks.empty(), "empty: no blocks");
+    check_equal(wordsmith::markup::serialize(Document{}), "",
                 "empty: serializes to nothing");
 }
 

@@ -2,20 +2,20 @@
 // A small, UI-agnostic Markdown model, parser and serializer.
 //
 // Adapted from Ogden's ogden::markup, which parsed LSP hover text for display.
-// Wordsworth also has to write Markdown back out, so this version gains a
+// Wordsmith also has to write Markdown back out, so this version gains a
 // serializer and an underline style (Ogden had no need for either).
 //
 // C++17, no GLib.
 //
 
-#ifndef WORDSWORTH_MARKUP_HPP
-#define WORDSWORTH_MARKUP_HPP
+#ifndef WORDSMITH_MARKUP_HPP
+#define WORDSMITH_MARKUP_HPP
 
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace wordsworth::markup {
+namespace wordsmith::markup {
 
 /**
  * One styled run of inline text. Styles are flat (not a nested tree) so the run
@@ -72,6 +72,6 @@ std::string serialize(const Document& document);
  *  Exposed for testing; `serialize` uses it internally. */
 std::string serialize_inline(const std::vector<Span>& spans);
 
-} // namespace wordsworth::markup
+} // namespace wordsmith::markup
 
-#endif /* WORDSWORTH_MARKUP_HPP */
+#endif /* WORDSMITH_MARKUP_HPP */

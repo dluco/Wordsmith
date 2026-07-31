@@ -1,11 +1,11 @@
-add_executable(wordsworth-driver
-    wordsworth-driver.c
+add_executable(wordsmith-driver
+    wordsmith-driver.c
 )
 
-target_link_libraries(wordsworth-driver PRIVATE
-    wordsworth-ui
+target_link_libraries(wordsmith-driver PRIVATE
+    wordsmith-ui
 )
 
-set_target_properties(wordsworth-driver PROPERTIES
-    OUTPUT_NAME wordsworth
+set_target_properties(wordsmith-driver PROPERTIES
+    OUTPUT_NAME wordsmith
 )

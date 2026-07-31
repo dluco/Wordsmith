@@ -1,15 +1,15 @@
-#include "wordsworth-ui.h"
+#include "wordsmith-ui.h"
 
 #include "main-window.h"
 
 #include <gtk/gtk.h>
 
-#define WORDSWORTH_APP_ID       "io.github.dluco.Wordsworth"
-#define WORDSWORTH_RESOURCE_DIR "/io/github/dluco/Wordsworth"
+#define WORDSMITH_APP_ID       "io.github.dluco.Wordsmith"
+#define WORDSMITH_RESOURCE_DIR "/io/github/dluco/Wordsmith"
 
-/* Defined in the generated wordsworth-resources.c (GResource bundle, built
+/* Defined in the generated wordsmith-resources.c (GResource bundle, built
  * with --manual-register). Registers the stylesheet and any bundled icons. */
-void wordsworth_resources_register_resource(void);
+void wordsmith_resources_register_resource(void);
 
 static void load_stylesheet(void)
 {
@@ -19,7 +19,7 @@ static void load_stylesheet(void)
     }
 
     GtkCssProvider* provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_resource(provider, WORDSWORTH_RESOURCE_DIR "/style.css");
+    gtk_css_provider_load_from_resource(provider, WORDSMITH_RESOURCE_DIR "/style.css");
     gtk_style_context_add_provider_for_display(
         display, GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -31,7 +31,7 @@ static void on_app_startup(GApplication* app, gpointer user_data)
     (void) app;
     (void) user_data;
 
-    wordsworth_resources_register_resource();
+    wordsmith_resources_register_resource();
     load_stylesheet();
 }
 
@@ -42,7 +42,7 @@ static void on_app_activate(GApplication* app, gpointer user_data)
     main_window_present(GTK_APPLICATION(app), NULL);
 }
 
-/* `wordsworth <project-directory>`. GApplication routes command-line paths
+/* `wordsmith <project-directory>`. GApplication routes command-line paths
  * here rather than to activate, one window per path. */
 static void on_app_open(GApplication* app, GFile** files, gint file_count,
                         const gchar* hint, gpointer user_data)
@@ -57,15 +57,15 @@ static void on_app_open(GApplication* app, GFile** files, gint file_count,
     }
 }
 
-void wordsworth_ui_init(void)
+void wordsmith_ui_init(void)
 {
     /* GtkApplication calls gtk_init() during startup. */
 }
 
-int wordsworth_ui_main(int argc, char* argv[])
+int wordsmith_ui_main(int argc, char* argv[])
 {
     GtkApplication* app = gtk_application_new(
-        WORDSWORTH_APP_ID, G_APPLICATION_HANDLES_OPEN);
+        WORDSMITH_APP_ID, G_APPLICATION_HANDLES_OPEN);
 
     g_signal_connect(app, "startup", G_CALLBACK(on_app_startup), NULL);
     g_signal_connect(app, "activate", G_CALLBACK(on_app_activate), NULL);

@@ -1,5 +1,5 @@
-#include "core/wordsworth-core-c.h"
-#include "core/wordsworth-core.hpp"
+#include "core/wordsmith-core-c.h"
+#include "core/wordsmith-core.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -9,15 +9,15 @@
  * boundary shows up here rather than in the UI. */
 int main()
 {
-    const std::string from_cxx = wordsworth::version();
+    const std::string from_cxx = wordsmith::version();
     assert(!from_cxx.empty());
 
-    const char* from_c = wordsworth_version();
+    const char* from_c = wordsmith_version();
     assert(from_c != nullptr);
     assert(from_cxx == from_c);
 
     /* The cached bridge string must stay valid across calls. */
-    assert(wordsworth_version() == from_c);
+    assert(wordsmith_version() == from_c);
 
     return 0;
 }

@@ -10,13 +10,13 @@
 
 namespace fs = std::filesystem;
 
-using wordsworth::BinderEntry;
+using wordsmith::BinderEntry;
 
 /* The C handles are the C++ types. Path strings are cached alongside the
  * project so the borrowed `const char*` accessors have somewhere stable to
  * point. */
-struct WordsworthProject {
-    std::unique_ptr<wordsworth::Project> project;
+struct WordsmithProject {
+    std::unique_ptr<wordsmith::Project> project;
     std::string                          root_cache;
     std::string                          manuscript_cache;
 
@@ -46,21 +46,21 @@ void set_error(char** error, const std::string& message)
     }
 }
 
-const BinderEntry* as_entry(const WordsworthBinderNode* node)
+const BinderEntry* as_entry(const WordsmithBinderNode* node)
 {
     return reinterpret_cast<const BinderEntry*>(node);
 }
 
-const WordsworthBinderNode* as_node(const BinderEntry* entry)
+const WordsmithBinderNode* as_node(const BinderEntry* entry)
 {
-    return reinterpret_cast<const WordsworthBinderNode*>(entry);
+    return reinterpret_cast<const WordsmithBinderNode*>(entry);
 }
 
 } // namespace
 
 /* ── lifecycle ──────────────────────────────────────────────────────────── */
 
-WordsworthProject* wordsworth_project_open(const char* root, char** error)
+WordsmithProject* wordsmith_project_open(const char* root, char** error)
 {
     if (root == nullptr) {
         set_error(error, "no project path given");
@@ -68,13 +68,13 @@ WordsworthProject* wordsworth_project_open(const char* root, char** error)
     }
 
     std::string message;
-    auto opened = wordsworth::Project::open(fs::path(root), message);
+    auto opened = wordsmith::Project::open(fs::path(root), message);
     if (opened == nullptr) {
         set_error(error, message);
         return nullptr;
     }
 
-    auto* handle = new (std::nothrow) WordsworthProject();
+    auto* handle = new (std::nothrow) WordsmithProject();
     if (handle == nullptr) {
         return nullptr;
     }
@@ -83,7 +83,7 @@ WordsworthProject* wordsworth_project_open(const char* root, char** error)
     return handle;
 }
 
-WordsworthProject* wordsworth_project_create(const char* root, const char* title,
+WordsmithProject* wordsmith_project_create(const char* root, const char* title,
                                              char** error)
 {
     if (root == nullptr) {
@@ -92,14 +92,14 @@ WordsworthProject* wordsworth_project_create(const char* root, const char* title
     }
 
     std::string message;
-    auto created = wordsworth::Project::create(
+    auto created = wordsmith::Project::create(
         fs::path(root), title != nullptr ? title : "", message);
     if (created == nullptr) {
         set_error(error, message);
         return nullptr;
     }
 
-    auto* handle = new (std::nothrow) WordsworthProject();
+    auto* handle = new (std::nothrow) WordsmithProject();
     if (handle == nullptr) {
         return nullptr;
     }
@@ -108,29 +108,29 @@ WordsworthProject* wordsworth_project_create(const char* root, const char* title
     return handle;
 }
 
-void wordsworth_project_free(WordsworthProject* project)
+void wordsmith_project_free(WordsmithProject* project)
 {
     delete project;
 }
 
 /* ── accessors ──────────────────────────────────────────────────────────── */
 
-const char* wordsworth_project_title(const WordsworthProject* project)
+const char* wordsmith_project_title(const WordsmithProject* project)
 {
     return project != nullptr ? project->project->title().c_str() : "";
 }
 
-const char* wordsworth_project_root(const WordsworthProject* project)
+const char* wordsmith_project_root(const WordsmithProject* project)
 {
     return project != nullptr ? project->root_cache.c_str() : "";
 }
 
-const char* wordsworth_project_manuscript_path(const WordsworthProject* project)
+const char* wordsmith_project_manuscript_path(const WordsmithProject* project)
 {
     return project != nullptr ? project->manuscript_cache.c_str() : "";
 }
 
-void wordsworth_project_reload(WordsworthProject* project)
+void wordsmith_project_reload(WordsmithProject* project)
 {
     if (project == nullptr) {
         return;
@@ -138,8 +138,8 @@ void wordsworth_project_reload(WordsworthProject* project)
     project->project->reload_binder();
 }
 
-const WordsworthBinderNode* wordsworth_project_binder_root(
-    const WordsworthProject* project)
+const WordsmithBinderNode* wordsmith_project_binder_root(
+    const WordsmithProject* project)
 {
     if (project == nullptr) {
         return nullptr;
@@ -149,32 +149,32 @@ const WordsworthBinderNode* wordsworth_project_binder_root(
 
 /* ── binder nodes ───────────────────────────────────────────────────────── */
 
-const char* wordsworth_binder_node_name(const WordsworthBinderNode* node)
+const char* wordsmith_binder_node_name(const WordsmithBinderNode* node)
 {
     const BinderEntry* entry = as_entry(node);
     return entry != nullptr ? entry->name.c_str() : "";
 }
 
-const char* wordsworth_binder_node_path(const WordsworthBinderNode* node)
+const char* wordsmith_binder_node_path(const WordsmithBinderNode* node)
 {
     const BinderEntry* entry = as_entry(node);
     return entry != nullptr ? entry->path_string.c_str() : "";
 }
 
-int wordsworth_binder_node_is_folder(const WordsworthBinderNode* node)
+int wordsmith_binder_node_is_folder(const WordsmithBinderNode* node)
 {
     const BinderEntry* entry = as_entry(node);
     return entry != nullptr && entry->is_folder ? 1 : 0;
 }
 
-size_t wordsworth_binder_node_child_count(const WordsworthBinderNode* node)
+size_t wordsmith_binder_node_child_count(const WordsmithBinderNode* node)
 {
     const BinderEntry* entry = as_entry(node);
     return entry != nullptr ? entry->children.size() : 0;
 }
 
-const WordsworthBinderNode* wordsworth_binder_node_child(
-    const WordsworthBinderNode* node, size_t index)
+const WordsmithBinderNode* wordsmith_binder_node_child(
+    const WordsmithBinderNode* node, size_t index)
 {
     const BinderEntry* entry = as_entry(node);
     if (entry == nullptr || index >= entry->children.size()) {
@@ -185,7 +185,7 @@ const WordsworthBinderNode* wordsworth_binder_node_child(
 
 /* ── mutation ───────────────────────────────────────────────────────────── */
 
-int wordsworth_project_create_folder(WordsworthProject* project,
+int wordsmith_project_create_folder(WordsmithProject* project,
                                      const char* parent_path, const char* name,
                                      char** error)
 {
@@ -202,7 +202,7 @@ int wordsworth_project_create_folder(WordsworthProject* project,
     return 1;
 }
 
-int wordsworth_project_create_document(WordsworthProject* project,
+int wordsmith_project_create_document(WordsmithProject* project,
                                        const char* parent_path, const char* name,
                                        char** created_path, char** error)
 {
@@ -226,7 +226,7 @@ int wordsworth_project_create_document(WordsworthProject* project,
 
 /* ── documents ──────────────────────────────────────────────────────────── */
 
-char* wordsworth_document_read(const char* path, char** error)
+char* wordsmith_document_read(const char* path, char** error)
 {
     if (path == nullptr) {
         set_error(error, "no document path given");
@@ -235,14 +235,14 @@ char* wordsworth_document_read(const char* path, char** error)
 
     std::string markdown;
     std::string message;
-    if (!wordsworth::read_document(fs::path(path), markdown, message)) {
+    if (!wordsmith::read_document(fs::path(path), markdown, message)) {
         set_error(error, message);
         return nullptr;
     }
     return duplicate(markdown);
 }
 
-int wordsworth_document_write(const char* path, const char* markdown, char** error)
+int wordsmith_document_write(const char* path, const char* markdown, char** error)
 {
     if (path == nullptr || markdown == nullptr) {
         set_error(error, "missing argument");
@@ -250,7 +250,7 @@ int wordsworth_document_write(const char* path, const char* markdown, char** err
     }
 
     std::string message;
-    if (!wordsworth::write_document(fs::path(path), markdown, message)) {
+    if (!wordsmith::write_document(fs::path(path), markdown, message)) {
         set_error(error, message);
         return 0;
     }

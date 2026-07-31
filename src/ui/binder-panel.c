@@ -17,7 +17,7 @@ struct _BinderItem {
     char*    path;
     gboolean is_folder;
 
-    const WordsworthBinderNode* node;
+    const WordsmithBinderNode* node;
 };
 
 G_DEFINE_FINAL_TYPE(BinderItem, binder_item, G_TYPE_OBJECT)
@@ -40,13 +40,13 @@ static void binder_item_init(BinderItem* item)
     (void) item;
 }
 
-static BinderItem* binder_item_new(const WordsworthBinderNode* node)
+static BinderItem* binder_item_new(const WordsmithBinderNode* node)
 {
     BinderItem* item = g_object_new(BINDER_TYPE_ITEM, NULL);
     item->node      = node;
-    item->name      = g_strdup(wordsworth_binder_node_name(node));
-    item->path      = g_strdup(wordsworth_binder_node_path(node));
-    item->is_folder = wordsworth_binder_node_is_folder(node) != 0;
+    item->name      = g_strdup(wordsmith_binder_node_name(node));
+    item->path      = g_strdup(wordsmith_binder_node_path(node));
+    item->is_folder = wordsmith_binder_node_is_folder(node) != 0;
     return item;
 }
 
@@ -58,7 +58,7 @@ struct BinderPanel {
     GtkTreeListModel* tree_model;
     GtkSingleSelection* selection;
 
-    WordsworthProject* project;   /* borrowed; NULL when no project is open */
+    WordsmithProject* project;   /* borrowed; NULL when no project is open */
 
     BinderSelectFn select_callback;
     void*          select_user_data;
@@ -76,10 +76,10 @@ static GListModel* create_child_model(gpointer item, gpointer user_data)
     }
 
     GListStore* store = g_list_store_new(BINDER_TYPE_ITEM);
-    const size_t count = wordsworth_binder_node_child_count(parent->node);
+    const size_t count = wordsmith_binder_node_child_count(parent->node);
     for (size_t index = 0; index < count; index++) {
-        const WordsworthBinderNode* child =
-            wordsworth_binder_node_child(parent->node, index);
+        const WordsmithBinderNode* child =
+            wordsmith_binder_node_child(parent->node, index);
         BinderItem* child_item = binder_item_new(child);
         g_list_store_append(store, child_item);
         g_object_unref(child_item);
@@ -165,15 +165,15 @@ static GListModel* build_root_model(BinderPanel* binder)
         return G_LIST_MODEL(store);
     }
 
-    const WordsworthBinderNode* root =
-        wordsworth_project_binder_root(binder->project);
+    const WordsmithBinderNode* root =
+        wordsmith_project_binder_root(binder->project);
     if (root == NULL) {
         return G_LIST_MODEL(store);
     }
 
-    const size_t count = wordsworth_binder_node_child_count(root);
+    const size_t count = wordsmith_binder_node_child_count(root);
     for (size_t index = 0; index < count; index++) {
-        BinderItem* item = binder_item_new(wordsworth_binder_node_child(root, index));
+        BinderItem* item = binder_item_new(wordsmith_binder_node_child(root, index));
         g_list_store_append(store, item);
         g_object_unref(item);
     }
@@ -207,7 +207,7 @@ void binder_panel_reload(BinderPanel* binder)
     g_object_unref(selection);
 }
 
-void binder_panel_set_project(BinderPanel* binder, WordsworthProject* project)
+void binder_panel_set_project(BinderPanel* binder, WordsmithProject* project)
 {
     binder->project = project;
     binder_panel_reload(binder);
@@ -221,7 +221,7 @@ char* binder_panel_target_folder(BinderPanel* binder)
         return NULL;
     }
 
-    const char* manuscript = wordsworth_project_manuscript_path(binder->project);
+    const char* manuscript = wordsmith_project_manuscript_path(binder->project);
     GtkTreeListRow* row = gtk_single_selection_get_selected_item(binder->selection);
     if (row == NULL) {
         return g_strdup(manuscript);

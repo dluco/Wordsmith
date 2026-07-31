@@ -26,7 +26,7 @@ void binder_panel_set_select_callback(BinderPanel* binder,
 
 /** Point the binder at a project, or NULL to empty it. The project is borrowed
  *  and must outlive the panel's use of it. Rebuilds the tree. */
-void binder_panel_set_project(BinderPanel* binder, WordsworthProject* project);
+void binder_panel_set_project(BinderPanel* binder, WordsmithProject* project);
 
 /** Rebuild the tree from the project's current binder. Call after reloading
  *  the project. */

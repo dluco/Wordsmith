@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
-  <gresource prefix="/io/github/dluco/Wordsworth">
+  <gresource prefix="/io/github/dluco/Wordsmith">
     <file>style.css</file>
   </gresource>
 
   <!-- Bundled icons go here, laid out as an icon theme so that a
-       gtk_icon_theme_add_resource_path("/io/github/dluco/Wordsworth/icons")
+       gtk_icon_theme_add_resource_path("/io/github/dluco/Wordsmith/icons")
        makes each file resolvable by name.
-  <gresource prefix="/io/github/dluco/Wordsworth/icons/scalable/actions">
+  <gresource prefix="/io/github/dluco/Wordsmith/icons/scalable/actions">
     <file alias="binder-folder.svg">icons/binder-folder.svg</file>
   </gresource>
   -->

@@ -1,5 +1,5 @@
-#ifndef WORDSWORTH_MARKUP_C_H
-#define WORDSWORTH_MARKUP_C_H
+#ifndef WORDSMITH_MARKUP_C_H
+#define WORDSMITH_MARKUP_C_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -10,61 +10,61 @@ extern "C" {
 
 /* ── opaque handles ─────────────────────────────────────────────────────── */
 
-typedef struct WordsworthMarkupDocument WordsworthMarkupDocument;
-typedef struct WordsworthMarkupBuilder  WordsworthMarkupBuilder;
+typedef struct WordsmithMarkupDocument WordsmithMarkupDocument;
+typedef struct WordsmithMarkupBuilder  WordsmithMarkupBuilder;
 
 /* ── value types ────────────────────────────────────────────────────────── */
 
 typedef enum {
-    WORDSWORTH_MARKUP_PARAGRAPH,
-    WORDSWORTH_MARKUP_HEADING,
-    WORDSWORTH_MARKUP_CODE_BLOCK,
-    WORDSWORTH_MARKUP_LIST_ITEM,
-    WORDSWORTH_MARKUP_QUOTE,
-    WORDSWORTH_MARKUP_RULE,
-} WordsworthMarkupBlockKind;
+    WORDSMITH_MARKUP_PARAGRAPH,
+    WORDSMITH_MARKUP_HEADING,
+    WORDSMITH_MARKUP_CODE_BLOCK,
+    WORDSMITH_MARKUP_LIST_ITEM,
+    WORDSMITH_MARKUP_QUOTE,
+    WORDSMITH_MARKUP_RULE,
+} WordsmithMarkupBlockKind;
 
 typedef struct {
-    WordsworthMarkupBlockKind kind;
+    WordsmithMarkupBlockKind kind;
     int                       level;        /* heading level, or list nesting depth */
     int                       ordered;      /* list item: ordered(1) / bullet(0) */
     int                       list_number;  /* ordered list item number */
-} WordsworthMarkupBlockInfo;
+} WordsmithMarkupBlockInfo;
 
 typedef enum {
-    WORDSWORTH_MARKUP_SPAN_EMPHASIS  = 1 << 0,
-    WORDSWORTH_MARKUP_SPAN_STRONG    = 1 << 1,
-    WORDSWORTH_MARKUP_SPAN_UNDERLINE = 1 << 2,
-    WORDSWORTH_MARKUP_SPAN_CODE      = 1 << 3,
-} WordsworthMarkupSpanFlags;
+    WORDSMITH_MARKUP_SPAN_EMPHASIS  = 1 << 0,
+    WORDSMITH_MARKUP_SPAN_STRONG    = 1 << 1,
+    WORDSMITH_MARKUP_SPAN_UNDERLINE = 1 << 2,
+    WORDSMITH_MARKUP_SPAN_CODE      = 1 << 3,
+} WordsmithMarkupSpanFlags;
 
 /* A styled inline run. `text`/`href` are borrowed and valid while the owning
  * document is alive; `href` is NULL when the run is not a link. */
 typedef struct {
     const char* text;
-    uint32_t    flags;   /* WordsworthMarkupSpanFlags bitset */
+    uint32_t    flags;   /* WordsmithMarkupSpanFlags bitset */
     const char* href;
-} WordsworthMarkupSpan;
+} WordsmithMarkupSpan;
 
 /* ── reading: markdown to a document ────────────────────────────────────── */
 
 /** Parse a Markdown string into a document. Never returns NULL for valid
  *  input (an empty string yields a document with zero blocks). */
-WordsworthMarkupDocument* wordsworth_markup_parse(const char* markdown);
-void wordsworth_markup_document_free(WordsworthMarkupDocument* doc);
+WordsmithMarkupDocument* wordsmith_markup_parse(const char* markdown);
+void wordsmith_markup_document_free(WordsmithMarkupDocument* doc);
 
-size_t                    wordsworth_markup_block_count(const WordsworthMarkupDocument* doc);
-WordsworthMarkupBlockInfo wordsworth_markup_block_info(const WordsworthMarkupDocument* doc,
+size_t                    wordsmith_markup_block_count(const WordsmithMarkupDocument* doc);
+WordsmithMarkupBlockInfo wordsmith_markup_block_info(const WordsmithMarkupDocument* doc,
                                                        size_t block);
 
 /* CODE_BLOCK only: the verbatim body and language (language may be ""). */
-const char* wordsworth_markup_block_code(const WordsworthMarkupDocument* doc, size_t block);
-const char* wordsworth_markup_block_language(const WordsworthMarkupDocument* doc, size_t block);
+const char* wordsmith_markup_block_code(const WordsmithMarkupDocument* doc, size_t block);
+const char* wordsmith_markup_block_language(const WordsmithMarkupDocument* doc, size_t block);
 
 /* PARAGRAPH / HEADING / LIST_ITEM / QUOTE: the inline styled spans. */
-size_t               wordsworth_markup_block_span_count(const WordsworthMarkupDocument* doc,
+size_t               wordsmith_markup_block_span_count(const WordsmithMarkupDocument* doc,
                                                         size_t block);
-WordsworthMarkupSpan wordsworth_markup_block_span(const WordsworthMarkupDocument* doc,
+WordsmithMarkupSpan wordsmith_markup_block_span(const WordsmithMarkupDocument* doc,
                                                   size_t block, size_t span);
 
 /* ── writing: a document back to markdown ───────────────────────────────── */
@@ -73,38 +73,38 @@ WordsworthMarkupSpan wordsworth_markup_block_span(const WordsworthMarkupDocument
  * asks for the Markdown. Escaping and delimiter placement stay in the core so
  * they are testable without a display. */
 
-WordsworthMarkupBuilder* wordsworth_markup_builder_new(void);
-void                     wordsworth_markup_builder_free(WordsworthMarkupBuilder* builder);
+WordsmithMarkupBuilder* wordsmith_markup_builder_new(void);
+void                     wordsmith_markup_builder_free(WordsmithMarkupBuilder* builder);
 
 /** Start a block. `level` is the heading level or list nesting depth, and is
  *  ignored for kinds that have no use for it. Spans added afterwards belong to
  *  this block until the next begin_block call. */
-void wordsworth_markup_builder_begin_block(WordsworthMarkupBuilder* builder,
-                                           WordsworthMarkupBlockKind kind,
+void wordsmith_markup_builder_begin_block(WordsmithMarkupBuilder* builder,
+                                           WordsmithMarkupBlockKind kind,
                                            int level);
 
 /** Append a styled run to the current block. `flags` is a
- *  WordsworthMarkupSpanFlags bitset; `href` may be NULL. Text is copied.
+ *  WordsmithMarkupSpanFlags bitset; `href` may be NULL. Text is copied.
  *  Ignored if no block has been started. */
-void wordsworth_markup_builder_add_span(WordsworthMarkupBuilder* builder,
+void wordsmith_markup_builder_add_span(WordsmithMarkupBuilder* builder,
                                         const char* text, uint32_t flags,
                                         const char* href);
 
 /** Set the verbatim body of the current CODE_BLOCK. `language` may be NULL.
  *  Code blocks carry raw text rather than spans, so this replaces add_span for
  *  that kind. Ignored if no block has been started. */
-void wordsworth_markup_builder_set_code(WordsworthMarkupBuilder* builder,
+void wordsmith_markup_builder_set_code(WordsmithMarkupBuilder* builder,
                                         const char* code, const char* language);
 
 /** Render everything added so far. Caller owns the result and frees it with
- *  wordsworth_free_string(). Never returns NULL. */
-char* wordsworth_markup_builder_to_markdown(const WordsworthMarkupBuilder* builder);
+ *  wordsmith_free_string(). Never returns NULL. */
+char* wordsmith_markup_builder_to_markdown(const WordsmithMarkupBuilder* builder);
 
 /** Free a string returned by this header. */
-void wordsworth_free_string(char* text);
+void wordsmith_free_string(char* text);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* WORDSWORTH_MARKUP_C_H */
+#endif /* WORDSMITH_MARKUP_C_H */

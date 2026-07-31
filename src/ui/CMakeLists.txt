@@ -25,39 +25,39 @@ endif ()
 # Bundle the app's assets (stylesheet, and icons later) into a GResource.
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 
-set(WORDSWORTH_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/wordsworth.gresource.xml)
-set(WORDSWORTH_RESOURCES_C   ${CMAKE_CURRENT_BINARY_DIR}/wordsworth-resources.c)
+set(WORDSMITH_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/wordsmith.gresource.xml)
+set(WORDSMITH_RESOURCES_C   ${CMAKE_CURRENT_BINARY_DIR}/wordsmith-resources.c)
 
 # Rebuild the generated source when any bundled file (or the manifest) changes.
 # CONFIGURE_DEPENDS re-globs on reconfigure, so new icons get picked up.
-file(GLOB WORDSWORTH_GRESOURCE_DEPS CONFIGURE_DEPENDS
+file(GLOB WORDSMITH_GRESOURCE_DEPS CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/icons/*.svg)
 
-# --manual-register: wordsworth-ui is a static library, so a resource object
+# --manual-register: wordsmith-ui is a static library, so a resource object
 # holding nothing but a constructor would be dropped from the final link.
-# Calling wordsworth_resources_register_resource() from wordsworth-ui.c
+# Calling wordsmith_resources_register_resource() from wordsmith-ui.c
 # references a symbol in this object and forces it into the executable.
 add_custom_command(
-    OUTPUT ${WORDSWORTH_RESOURCES_C}
-    COMMAND ${GLIB_COMPILE_RESOURCES} --target=${WORDSWORTH_RESOURCES_C}
+    OUTPUT ${WORDSMITH_RESOURCES_C}
+    COMMAND ${GLIB_COMPILE_RESOURCES} --target=${WORDSMITH_RESOURCES_C}
             --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}
-            --generate-source --manual-register --c-name wordsworth_resources
-            ${WORDSWORTH_GRESOURCE_XML}
-    DEPENDS ${WORDSWORTH_GRESOURCE_XML}
+            --generate-source --manual-register --c-name wordsmith_resources
+            ${WORDSMITH_GRESOURCE_XML}
+    DEPENDS ${WORDSMITH_GRESOURCE_XML}
             ${CMAKE_CURRENT_SOURCE_DIR}/style.css
-            ${WORDSWORTH_GRESOURCE_DEPS}
+            ${WORDSMITH_GRESOURCE_DEPS}
     VERBATIM)
 
-add_library(wordsworth-ui STATIC)
+add_library(wordsmith-ui STATIC)
 
-target_sources(wordsworth-ui PRIVATE ${WORDSWORTH_RESOURCES_C})
+target_sources(wordsmith-ui PRIVATE ${WORDSMITH_RESOURCES_C})
 
-target_sources(wordsworth-ui PUBLIC
-    wordsworth-ui.h
+target_sources(wordsmith-ui PUBLIC
+    wordsmith-ui.h
 )
 
-target_sources(wordsworth-ui PRIVATE
-    wordsworth-ui.c
+target_sources(wordsmith-ui PRIVATE
+    wordsmith-ui.c
     ui-state.c
     main-window.c
     menu-bar.c
@@ -67,7 +67,7 @@ target_sources(wordsworth-ui PRIVATE
     inspector-panel.c
 )
 
-target_link_libraries(wordsworth-ui PRIVATE
+target_link_libraries(wordsmith-ui PRIVATE
     gtk4_lib
-    wordsworth-core
+    wordsmith-core
 )

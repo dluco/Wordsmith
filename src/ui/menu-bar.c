@@ -4,7 +4,7 @@
 #include "project-actions.h"
 
 #include "core/markup-c.h"
-#include "core/wordsworth-core-c.h"
+#include "core/wordsmith-core-c.h"
 
 struct MenuBar {
     GtkApplication* app; /* borrowed */
@@ -20,7 +20,7 @@ static void on_stub_action(GSimpleAction* action, GVariant* param, gpointer user
     (void) user;
 
     const char* name = g_action_get_name(G_ACTION(action));
-    g_message("wordsworth: action '%s' is not implemented yet", name);
+    g_message("wordsmith: action '%s' is not implemented yet", name);
 }
 
 static void on_new_project(GSimpleAction* action, GVariant* param, gpointer user)
@@ -69,40 +69,40 @@ static void on_undo(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_undo(((WordsworthUiState*) user)->editor);
+    editor_panel_undo(((WordsmithUiState*) user)->editor);
 }
 
 static void on_redo(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_redo(((WordsworthUiState*) user)->editor);
+    editor_panel_redo(((WordsmithUiState*) user)->editor);
 }
 
 static void on_cut(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_cut(((WordsworthUiState*) user)->editor);
+    editor_panel_cut(((WordsmithUiState*) user)->editor);
 }
 
 static void on_copy(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_copy(((WordsworthUiState*) user)->editor);
+    editor_panel_copy(((WordsmithUiState*) user)->editor);
 }
 
 static void on_paste(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_paste(((WordsworthUiState*) user)->editor);
+    editor_panel_paste(((WordsmithUiState*) user)->editor);
 }
 
 static void toggle_style(gpointer user, uint32_t span_flag)
 {
-    WordsworthUiState* state = user;
+    WordsmithUiState* state = user;
     editor_panel_toggle_style(state->editor, span_flag);
 }
 
@@ -110,21 +110,21 @@ static void on_format_bold(GSimpleAction* action, GVariant* param, gpointer user
 {
     (void) action;
     (void) param;
-    toggle_style(user, WORDSWORTH_MARKUP_SPAN_STRONG);
+    toggle_style(user, WORDSMITH_MARKUP_SPAN_STRONG);
 }
 
 static void on_format_italic(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    toggle_style(user, WORDSWORTH_MARKUP_SPAN_EMPHASIS);
+    toggle_style(user, WORDSMITH_MARKUP_SPAN_EMPHASIS);
 }
 
 static void on_format_underline(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    toggle_style(user, WORDSWORTH_MARKUP_SPAN_UNDERLINE);
+    toggle_style(user, WORDSMITH_MARKUP_SPAN_UNDERLINE);
 }
 
 static void on_about(GSimpleAction* action, GVariant* param, gpointer user)
@@ -132,13 +132,13 @@ static void on_about(GSimpleAction* action, GVariant* param, gpointer user)
     (void) action;
     (void) param;
 
-    WordsworthUiState* state = user;
+    WordsmithUiState* state = user;
     const char* authors[] = { "David Luco", NULL };
 
     gtk_show_about_dialog(
         state != NULL ? state->window : NULL,
-        "program-name", "Wordsworth",
-        "version", wordsworth_version(),
+        "program-name", "Wordsmith",
+        "version", wordsmith_version(),
         "comments", "A novel editor.",
         "authors", authors,
         NULL);
@@ -149,7 +149,7 @@ static void on_quit(GSimpleAction* action, GVariant* param, gpointer user)
     (void) action;
     (void) param;
 
-    WordsworthUiState* state = user;
+    WordsmithUiState* state = user;
     if (state != NULL && state->window != NULL) {
         gtk_window_close(state->window);
     }
@@ -215,7 +215,7 @@ static const char* const TOGGLE_ACTIONS[] = {
     "show-inspector",
 };
 
-static void install_actions(WordsworthUiState* state, GtkApplication* app)
+static void install_actions(WordsmithUiState* state, GtkApplication* app)
 {
     for (gsize index = 0; index < G_N_ELEMENTS(ACTIONS); index++) {
         const ActionSpec* spec = &ACTIONS[index];
@@ -347,14 +347,14 @@ static GMenuModel* build_menu_model(void)
     g_object_unref(format_menu);
 
     GMenu* help_menu = g_menu_new();
-    g_menu_append(help_menu, "About Wordsworth", "win.about");
+    g_menu_append(help_menu, "About Wordsmith", "win.about");
     g_menu_append_submenu(menubar, "_Help", G_MENU_MODEL(help_menu));
     g_object_unref(help_menu);
 
     return G_MENU_MODEL(menubar);
 }
 
-MenuBar* menu_bar_new(WordsworthUiState* state, GtkApplication* app)
+MenuBar* menu_bar_new(WordsmithUiState* state, GtkApplication* app)
 {
     MenuBar* menu_bar = g_new0(MenuBar, 1);
     menu_bar->app = app;
