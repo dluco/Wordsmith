@@ -39,7 +39,22 @@ static void on_app_activate(GApplication* app, gpointer user_data)
 {
     (void) user_data;
 
-    main_window_present(GTK_APPLICATION(app));
+    main_window_present(GTK_APPLICATION(app), NULL);
+}
+
+/* `wordsworth <project-directory>`. GApplication routes command-line paths
+ * here rather than to activate, one window per path. */
+static void on_app_open(GApplication* app, GFile** files, gint file_count,
+                        const gchar* hint, gpointer user_data)
+{
+    (void) hint;
+    (void) user_data;
+
+    for (gint index = 0; index < file_count; index++) {
+        char* path = g_file_get_path(files[index]);
+        main_window_present(GTK_APPLICATION(app), path);
+        g_free(path);
+    }
 }
 
 void wordsworth_ui_init(void)
@@ -50,10 +65,11 @@ void wordsworth_ui_init(void)
 int wordsworth_ui_main(int argc, char* argv[])
 {
     GtkApplication* app = gtk_application_new(
-        WORDSWORTH_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
+        WORDSWORTH_APP_ID, G_APPLICATION_HANDLES_OPEN);
 
     g_signal_connect(app, "startup", G_CALLBACK(on_app_startup), NULL);
     g_signal_connect(app, "activate", G_CALLBACK(on_app_activate), NULL);
+    g_signal_connect(app, "open", G_CALLBACK(on_app_open), NULL);
 
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

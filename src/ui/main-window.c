@@ -46,7 +46,7 @@ static void on_window_destroy(GtkWidget* widget, gpointer user_data)
     ui_state_free(user_data);
 }
 
-void main_window_present(GtkApplication* app)
+void main_window_present(GtkApplication* app, const char* initial_project)
 {
     WordsworthUiState* state = ui_state_new();
     state->app = app;
@@ -101,4 +101,9 @@ void main_window_present(GtkApplication* app)
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), state);
 
     gtk_window_present(GTK_WINDOW(window));
+
+    /* Opened after the window is up so any failure has somewhere to report to. */
+    if (initial_project != NULL) {
+        project_actions_open_path(state, initial_project);
+    }
 }
