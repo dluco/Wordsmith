@@ -1,6 +1,10 @@
 add_library(wordsworth-core STATIC
     wordsworth-core.cpp
     wordsworth-core-c.cpp
+    markup.cpp
+    markup-c.cpp
+    project.cpp
+    project-c.cpp
 )
 
 set_target_properties(wordsworth-core PROPERTIES
@@ -14,6 +18,14 @@ target_sources(wordsworth-core PUBLIC
     FILES
     wordsworth-core.hpp
     wordsworth-core-c.h
+    markup.hpp
+    markup-c.h
+    project.hpp
+    project-c.h
+)
+
+target_link_libraries(wordsworth-core PRIVATE
+    argo
 )
 
 target_compile_definitions(wordsworth-core PRIVATE

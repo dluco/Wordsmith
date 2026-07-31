@@ -61,6 +61,7 @@ target_sources(wordsworth-ui PRIVATE
     ui-state.c
     main-window.c
     menu-bar.c
+    project-actions.c
     binder-panel.c
     editor-panel.c
     inspector-panel.c

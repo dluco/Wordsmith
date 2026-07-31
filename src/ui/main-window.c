@@ -4,6 +4,7 @@
 #include "editor-panel.h"
 #include "inspector-panel.h"
 #include "menu-bar.h"
+#include "project-actions.h"
 #include "ui-state.h"
 
 /* Starting geometry. The pane positions are absolute widths from the left,
@@ -13,22 +14,48 @@
 #define BINDER_DEFAULT_WIDTH   240
 #define INSPECTOR_DEFAULT_WIDTH 300
 
+/* Clicking a document in the binder opens it; clicking a folder just moves
+ * where new items will be created. */
+static void on_binder_selected(const char* path, int is_folder, void* user_data)
+{
+    WordsworthUiState* state = user_data;
+    if (path == NULL || is_folder) {
+        return;
+    }
+    project_actions_open_document(state, path);
+}
+
+static void on_editor_modified(int modified, void* user_data)
+{
+    (void) modified;
+    ui_state_update_title(user_data);
+}
+
+/* Committing on close keeps the binder-click behaviour consistent: edits are
+ * never dropped without the author asking for it. */
+static gboolean on_window_close_request(GtkWindow* window, gpointer user_data)
+{
+    (void) window;
+    project_actions_save(user_data);
+    return GDK_EVENT_PROPAGATE;   /* let the close proceed */
+}
+
 static void on_window_destroy(GtkWidget* widget, gpointer user_data)
 {
     (void) widget;
-
     ui_state_free(user_data);
 }
 
 void main_window_present(GtkApplication* app)
 {
     WordsworthUiState* state = ui_state_new();
+    state->app = app;
 
     GtkWidget* window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(window), "Wordsworth");
     gtk_window_set_default_size(GTK_WINDOW(window),
                                 WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT);
     state->window = GTK_WINDOW(window);
+    ui_state_update_title(state);
 
     /* The menu bar installs its actions on the window, so it needs the window
      * in place first. */
@@ -38,6 +65,9 @@ void main_window_present(GtkApplication* app)
     state->binder    = binder_panel_new();
     state->editor    = editor_panel_new();
     state->inspector = inspector_panel_new();
+
+    binder_panel_set_select_callback(state->binder, on_binder_selected, state);
+    editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
 
     /* Editor and inspector share the space to the right of the binder. */
     GtkWidget* editor_inspector_paned =
@@ -66,6 +96,8 @@ void main_window_present(GtkApplication* app)
 
     gtk_window_set_child(GTK_WINDOW(window), binder_paned);
 
+    g_signal_connect(window, "close-request",
+                     G_CALLBACK(on_window_close_request), state);
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), state);
 
     gtk_window_present(GTK_WINDOW(window));

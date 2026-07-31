@@ -1,0 +1,3 @@
+[submodule "external/argo"]
+	path = external/argo
+	url = git@github.com:/dluco/argo.git

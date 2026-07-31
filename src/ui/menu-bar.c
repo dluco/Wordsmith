@@ -1,13 +1,19 @@
 #include "menu-bar.h"
 
+#include "editor-panel.h"
+#include "project-actions.h"
+
+#include "core/markup-c.h"
 #include "core/wordsworth-core-c.h"
 
 struct MenuBar {
     GtkApplication* app; /* borrowed */
 };
 
-/* Every menu item routes here until its feature exists. Named actions keep
- * the accelerators and the menu model honest while the panels fill in. */
+/* ── action handlers ─────────────────────────────────────────────────────── */
+
+/* Menu items whose feature does not exist yet. Named actions keep the model
+ * and the accelerators honest while the panels fill in. */
 static void on_stub_action(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) param;
@@ -15,6 +21,110 @@ static void on_stub_action(GSimpleAction* action, GVariant* param, gpointer user
 
     const char* name = g_action_get_name(G_ACTION(action));
     g_message("wordsworth: action '%s' is not implemented yet", name);
+}
+
+static void on_new_project(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    project_actions_new_dialog(user);
+}
+
+static void on_open_project(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    project_actions_open_dialog(user);
+}
+
+static void on_close_project(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    project_actions_close(user);
+}
+
+static void on_save(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    project_actions_save(user);
+}
+
+static void on_new_text(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    project_actions_new_text(user);
+}
+
+static void on_new_folder(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    project_actions_new_folder(user);
+}
+
+static void on_undo(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    editor_panel_undo(((WordsworthUiState*) user)->editor);
+}
+
+static void on_redo(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    editor_panel_redo(((WordsworthUiState*) user)->editor);
+}
+
+static void on_cut(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    editor_panel_cut(((WordsworthUiState*) user)->editor);
+}
+
+static void on_copy(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    editor_panel_copy(((WordsworthUiState*) user)->editor);
+}
+
+static void on_paste(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    editor_panel_paste(((WordsworthUiState*) user)->editor);
+}
+
+static void toggle_style(gpointer user, uint32_t span_flag)
+{
+    WordsworthUiState* state = user;
+    editor_panel_toggle_style(state->editor, span_flag);
+}
+
+static void on_format_bold(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    toggle_style(user, WORDSWORTH_MARKUP_SPAN_STRONG);
+}
+
+static void on_format_italic(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    toggle_style(user, WORDSWORTH_MARKUP_SPAN_EMPHASIS);
+}
+
+static void on_format_underline(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    toggle_style(user, WORDSWORTH_MARKUP_SPAN_UNDERLINE);
 }
 
 static void on_about(GSimpleAction* action, GVariant* param, gpointer user)
@@ -45,6 +155,8 @@ static void on_quit(GSimpleAction* action, GVariant* param, gpointer user)
     }
 }
 
+/* ── action table ────────────────────────────────────────────────────────── */
+
 typedef struct ActionSpec {
     const char* name;
     GCallback   callback;
@@ -53,47 +165,47 @@ typedef struct ActionSpec {
 
 static const ActionSpec ACTIONS[] = {
     /* File */
-    { "new-project",      G_CALLBACK(on_stub_action), "<Control>n"       },
-    { "open-project",     G_CALLBACK(on_stub_action), "<Control>o"       },
-    { "save",             G_CALLBACK(on_stub_action), "<Control>s"       },
-    { "save-as",          G_CALLBACK(on_stub_action), "<Control><Shift>s" },
-    { "compile",          G_CALLBACK(on_stub_action), "<Control><Shift>e" },
-    { "close-project",    G_CALLBACK(on_stub_action), "<Control>w"       },
-    { "quit",             G_CALLBACK(on_quit),        "<Control>q"       },
+    { "new-project",      G_CALLBACK(on_new_project),      "<Control>n"        },
+    { "open-project",     G_CALLBACK(on_open_project),     "<Control>o"        },
+    { "save",             G_CALLBACK(on_save),             "<Control>s"        },
+    { "save-as",          G_CALLBACK(on_stub_action),      "<Control><Shift>s" },
+    { "compile",          G_CALLBACK(on_stub_action),      "<Control><Shift>e" },
+    { "close-project",    G_CALLBACK(on_close_project),    "<Control>w"        },
+    { "quit",             G_CALLBACK(on_quit),             "<Control>q"        },
 
     /* Edit */
-    { "undo",             G_CALLBACK(on_stub_action), "<Control>z"       },
-    { "redo",             G_CALLBACK(on_stub_action), "<Control><Shift>z" },
-    { "cut",              G_CALLBACK(on_stub_action), "<Control>x"       },
-    { "copy",             G_CALLBACK(on_stub_action), "<Control>c"       },
-    { "paste",            G_CALLBACK(on_stub_action), "<Control>v"       },
-    { "find",             G_CALLBACK(on_stub_action), "<Control>f"       },
-    { "find-in-project",  G_CALLBACK(on_stub_action), "<Control><Shift>f" },
+    { "undo",             G_CALLBACK(on_undo),             "<Control>z"        },
+    { "redo",             G_CALLBACK(on_redo),             "<Control><Shift>z" },
+    { "cut",              G_CALLBACK(on_cut),              "<Control>x"        },
+    { "copy",             G_CALLBACK(on_copy),             "<Control>c"        },
+    { "paste",            G_CALLBACK(on_paste),            "<Control>v"        },
+    { "find",             G_CALLBACK(on_stub_action),      "<Control>f"        },
+    { "find-in-project",  G_CALLBACK(on_stub_action),      "<Control><Shift>f" },
 
     /* Insert */
-    { "new-text",         G_CALLBACK(on_stub_action), "<Control>t"       },
-    { "new-folder",       G_CALLBACK(on_stub_action), NULL               },
-    { "insert-comment",   G_CALLBACK(on_stub_action), NULL               },
-    { "insert-footnote",  G_CALLBACK(on_stub_action), NULL               },
+    { "new-text",         G_CALLBACK(on_new_text),         "<Control>t"        },
+    { "new-folder",       G_CALLBACK(on_new_folder),       NULL                },
+    { "insert-comment",   G_CALLBACK(on_stub_action),      NULL                },
+    { "insert-footnote",  G_CALLBACK(on_stub_action),      NULL                },
 
     /* View */
-    { "view-document",    G_CALLBACK(on_stub_action), NULL               },
-    { "view-corkboard",   G_CALLBACK(on_stub_action), NULL               },
-    { "view-outliner",    G_CALLBACK(on_stub_action), NULL               },
-    { "composition-mode", G_CALLBACK(on_stub_action), "F11"              },
+    { "view-document",    G_CALLBACK(on_stub_action),      NULL                },
+    { "view-corkboard",   G_CALLBACK(on_stub_action),      NULL                },
+    { "view-outliner",    G_CALLBACK(on_stub_action),      NULL                },
+    { "composition-mode", G_CALLBACK(on_stub_action),      "F11"               },
 
     /* Project */
-    { "project-targets",  G_CALLBACK(on_stub_action), NULL               },
-    { "project-statistics", G_CALLBACK(on_stub_action), NULL             },
-    { "project-settings", G_CALLBACK(on_stub_action), NULL               },
+    { "project-targets",    G_CALLBACK(on_stub_action),    NULL                },
+    { "project-statistics", G_CALLBACK(on_stub_action),    NULL                },
+    { "project-settings",   G_CALLBACK(on_stub_action),    NULL                },
 
     /* Format */
-    { "format-bold",      G_CALLBACK(on_stub_action), "<Control>b"       },
-    { "format-italic",    G_CALLBACK(on_stub_action), "<Control>i"       },
-    { "format-underline", G_CALLBACK(on_stub_action), "<Control>u"       },
+    { "format-bold",      G_CALLBACK(on_format_bold),      "<Control>b"        },
+    { "format-italic",    G_CALLBACK(on_format_italic),    "<Control>i"        },
+    { "format-underline", G_CALLBACK(on_format_underline), "<Control>u"        },
 
     /* Help */
-    { "about",            G_CALLBACK(on_about),       NULL               },
+    { "about",            G_CALLBACK(on_about),            NULL                },
 };
 
 /* Stateful toggles for the two side panes. The window reads these back when
@@ -129,6 +241,8 @@ static void install_actions(WordsworthUiState* state, GtkApplication* app)
         g_object_unref(action);
     }
 }
+
+/* ── menu model ──────────────────────────────────────────────────────────── */
 
 static GMenuModel* build_menu_model(void)
 {
