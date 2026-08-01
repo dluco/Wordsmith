@@ -135,6 +135,45 @@ rule scoped to `.editor-pane` (`ui/text-scale.c`), rather than per panel: the
 size is one answer for the whole application, restored before any window exists.
 `text_scale_css()` is the display-free seam the UI test parses.
 
+### Session state
+
+Which binder folders were twisted open, and which document was being edited,
+are remembered per project in `$XDG_STATE_HOME/wordsmith/session.json`
+(`~/.local/state/...` when that is unset). `session.cpp` reads and writes it.
+
+Three files could have held this and two are wrong. Not `project.wordsmith`,
+which describes the work: expanded rows would churn it on every click and give
+two people sharing a project an argument about whose binder is open. Not
+preferences' `settings.json` either, which is *config*, the deliberate answers
+one author gives, in a file they are invited to edit; this is *state*, restored
+without being asked for, and there is one entry per project rather than one for
+the application. It stays outside the project for the reason preferences do: a
+project directory travels.
+
+One file holds every project, keyed by the normalised project root, most
+recently opened first, capped at `SESSION_PROJECT_LIMIT`. One file rather than
+one per project leaves nothing to collect when a project is deleted, and the cap
+bounds the growth. Inside an entry, paths are relative to the root.
+
+Reading never fails, the same as preferences. Beyond that, **a recorded path
+with nothing behind it on disk is dropped rather than restored** (`session_for`).
+That is the `children:` contract again: what is written down can only reopen
+what the scan already found. A document deleted outside Wordsmith opens nothing
+instead of raising an error on launch.
+
+The UI side lives in `ui-state.c`: `ui_state_remember_session()` starts a
+one-second timer so a run of expander clicks costs one write,
+`ui_state_flush_session()` forces it out ahead of anything that takes the
+project away, and `ui_state_set_project()` restores at the other end. Restoring
+selects the saved row rather than loading it directly, so the ordinary
+selection path opens the editor and inspector. `restoring_session` is what keeps
+putting a view back from counting as a change to it. A failed write warns and is
+otherwise ignored; a view that does not come back is not worth a dialog.
+
+`binder_panel_reload()` also carries the expansion across a rebuild, through the
+same two calls. Without it, creating a document would fold the whole binder
+shut.
+
 ### Frontmatter: surgical, never lossy
 
 `yaml.cpp` is a deliberately small YAML reader (no anchors, no flow mappings,

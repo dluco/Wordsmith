@@ -240,6 +240,7 @@ void project_actions_open_document(WordsmithUiState* state, const char* path)
     }
     inspector_panel_set_document(state->inspector, path);
     ui_state_update_title(state);
+    ui_state_remember_session(state);
 }
 
 /* ── metadata ────────────────────────────────────────────────────────────── */

@@ -6,6 +6,13 @@
 #include "menu-bar.h"
 
 #include "core/markup-c.h"
+#include "core/session-c.h"
+
+/* How long a change to the view waits before it is written. Long enough that
+ * twisting open a run of folders costs one write, short enough that a crash
+ * loses at most the last gesture. The balance sits where it does because what
+ * is at stake is a collapsed binder rather than any of the author's words. */
+#define SESSION_SAVE_DELAY_MS 1000
 
 WordsmithUiState* ui_state_new(void)
 {
@@ -18,6 +25,9 @@ void ui_state_free(WordsmithUiState* state)
         return;
     }
 
+    /* Before the panels the pending write would read from. */
+    g_clear_handle_id(&state->session_source, g_source_remove);
+
     menu_bar_free(state->menu_bar);
     binder_panel_free(state->binder);
     editor_panel_free(state->editor);
@@ -28,8 +38,96 @@ void ui_state_free(WordsmithUiState* state)
     g_free(state);
 }
 
+/* ── session ─────────────────────────────────────────────────────────────── */
+
+static void save_session_now(WordsmithUiState* state)
+{
+    if (state->project == NULL) {
+        return;
+    }
+
+    char** expanded = binder_panel_expanded_paths(state->binder);
+
+    char* error = NULL;
+    if (!wordsmith_session_save(wordsmith_project_root(state->project),
+                                editor_panel_path(state->editor),
+                                (const char* const*) expanded,
+                                g_strv_length(expanded), &error)) {
+        /* A view that does not come back is not worth a dialog in the author's
+         * way, and there is nothing they could do about it if it were. */
+        g_warning("could not remember the view: %s",
+                  error != NULL ? error : "unknown error");
+    }
+
+    wordsmith_free_string(error);
+    g_strfreev(expanded);
+}
+
+static gboolean on_session_save_timeout(gpointer user_data)
+{
+    WordsmithUiState* state = user_data;
+    state->session_source = 0;
+    save_session_now(state);
+    return G_SOURCE_REMOVE;
+}
+
+void ui_state_remember_session(WordsmithUiState* state)
+{
+    if (state->project == NULL || state->restoring_session) {
+        return;
+    }
+    /* The first change starts the clock and the rest ride along with it, so a
+     * burst settles one second after it began rather than one second after it
+     * stops. */
+    if (state->session_source == 0) {
+        state->session_source =
+            g_timeout_add(SESSION_SAVE_DELAY_MS, on_session_save_timeout, state);
+    }
+}
+
+void ui_state_flush_session(WordsmithUiState* state)
+{
+    g_clear_handle_id(&state->session_source, g_source_remove);
+    if (!state->restoring_session) {
+        save_session_now(state);
+    }
+}
+
+/* Put back what was saved for the project now open. Anything recorded that has
+ * since left the disk was already dropped by the core, so a folder deleted
+ * outside Wordsmith costs nothing here. */
+static void restore_session(WordsmithUiState* state)
+{
+    if (state->project == NULL) {
+        return;
+    }
+
+    WordsmithSession* session =
+        wordsmith_session_load(wordsmith_project_root(state->project));
+
+    const size_t count = wordsmith_session_expanded_count(session);
+    char** expanded = g_new0(char*, count + 1);
+    for (size_t index = 0; index < count; index++) {
+        expanded[index] = g_strdup(wordsmith_session_expanded(session, index));
+    }
+
+    state->restoring_session = TRUE;
+    binder_panel_set_expanded_paths(state->binder, (const char* const*) expanded);
+    /* Selecting the row is what opens the document, exactly as clicking it
+     * would, so the editor and the inspector follow without being told
+     * separately. A NULL path selects nothing. */
+    binder_panel_select_path(state->binder, wordsmith_session_open_document(session));
+    state->restoring_session = FALSE;
+
+    g_strfreev(expanded);
+    wordsmith_session_free(session);
+}
+
 void ui_state_set_project(WordsmithUiState* state, WordsmithProject* project)
 {
+    /* While the outgoing project's root is still there to key it by. */
+    ui_state_flush_session(state);
+
     editor_panel_close(state->editor);
     inspector_panel_clear(state->inspector);
 
@@ -37,6 +135,7 @@ void ui_state_set_project(WordsmithUiState* state, WordsmithProject* project)
     state->project = project;
 
     binder_panel_set_project(state->binder, project);
+    restore_session(state);
     ui_state_update_title(state);
 }
 

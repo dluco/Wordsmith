@@ -58,12 +58,21 @@ static void on_editor_modified(int modified, void* user_data)
     ui_state_update_title(user_data);
 }
 
+/* A folder twisted open or shut is worth remembering, and nothing else. The
+ * panel reports it; deciding that is the window's job. */
+static void on_binder_expanded(void* user_data)
+{
+    ui_state_remember_session(user_data);
+}
+
 /* Committing on close keeps the binder-click behaviour consistent: edits are
- * never dropped without the author asking for it. */
+ * never dropped without the author asking for it. The view goes down with the
+ * same gesture, since a pending write would otherwise die with the window. */
 static gboolean on_window_close_request(GtkWindow* window, gpointer user_data)
 {
     (void) window;
     project_actions_save(user_data);
+    ui_state_flush_session(user_data);
     return GDK_EVENT_PROPAGATE;   /* let the close proceed */
 }
 
@@ -95,6 +104,7 @@ void main_window_present(GtkApplication* app, const char* initial_project)
 
     binder_panel_set_select_callback(state->binder, on_binder_selected, state);
     binder_panel_set_move_callback(state->binder, on_binder_moved, state);
+    binder_panel_set_expand_callback(state->binder, on_binder_expanded, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
     inspector_panel_set_commit_callback(state->inspector, on_inspector_commit, state);
 

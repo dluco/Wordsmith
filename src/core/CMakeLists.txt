@@ -7,6 +7,8 @@ add_library(wordsmith-core STATIC
     project-c.cpp
     preferences.cpp
     preferences-c.cpp
+    session.cpp
+    session-c.cpp
     safe-write.cpp
     snapshots.cpp
     yaml.cpp
@@ -31,6 +33,8 @@ target_sources(wordsmith-core PUBLIC
     project-c.h
     preferences.hpp
     preferences-c.h
+    session.hpp
+    session-c.h
     safe-write.hpp
     snapshots.hpp
     yaml.hpp

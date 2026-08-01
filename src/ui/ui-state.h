@@ -21,6 +21,11 @@ typedef struct WordsmithUiState {
     BinderPanel*    binder;
     EditorPanel*    editor;
     InspectorPanel* inspector;
+
+    /* The pending session write, and the guard that keeps putting a saved view
+     * back from counting as a change to it. */
+    guint    session_source;
+    gboolean restoring_session;
 } WordsmithUiState;
 
 WordsmithUiState* ui_state_new(void);
@@ -35,6 +40,19 @@ void ui_state_reload_project(WordsmithUiState* state);
 
 /** Retitle the window from the project, open document and modified flag. */
 void ui_state_update_title(WordsmithUiState* state);
+
+/* Which folders are open in the binder and which document is being edited are
+ * remembered per project, outside it, and put back by ui_state_set_project().
+ * See core/session.hpp for where that lands and why a failure is silent. */
+
+/** Note that the view has changed, and write it out shortly. Called on every
+ *  expander click and every document opened, so the delay is what keeps a run
+ *  of them to a single write. */
+void ui_state_remember_session(WordsmithUiState* state);
+
+/** Write the view out now, ahead of something that is about to take the project
+ *  away. Harmless with no project open. */
+void ui_state_flush_session(WordsmithUiState* state);
 
 /** Show `message` and, when non-NULL, `detail`. Takes ownership of `detail`,
  *  freeing it with wordsmith_free_string(), so it pairs with the core's

@@ -77,6 +77,13 @@ struct BinderPanel {
 
     BinderMoveFn   move_callback;
     void*          move_user_data;
+
+    BinderExpandFn expand_callback;
+    void*          expand_user_data;
+
+    /* Set while the panel is opening folders itself, so putting an expansion
+     * back does not read as the author having asked for it. */
+    gboolean       applying_expansion;
 };
 
 /* ── rows ────────────────────────────────────────────────────────────────── */
@@ -464,6 +471,25 @@ static void on_selection_changed(GObject* object, GParamSpec* spec,
     g_object_unref(item);
 }
 
+/* Every twist of an expander adds or removes the folder's children, so the flat
+ * model changing is the signal that the expansion did. There is no per-row
+ * signal to use instead: rows are created and dropped as folders open and
+ * close, so there would be nothing lasting to connect to. */
+static void on_tree_items_changed(GListModel* model, guint position, guint removed,
+                                  guint added, gpointer user_data)
+{
+    (void) model;
+    (void) position;
+    (void) removed;
+    (void) added;
+
+    BinderPanel* binder = user_data;
+    if (binder->applying_expansion || binder->expand_callback == NULL) {
+        return;
+    }
+    binder->expand_callback(binder->expand_user_data);
+}
+
 /* ── context menu ────────────────────────────────────────────────────────── */
 
 static void append_targeted(GMenu* section, const char* label, const char* action,
@@ -571,6 +597,11 @@ static GListModel* build_root_model(BinderPanel* binder)
 
 void binder_panel_reload(BinderPanel* binder)
 {
+    /* The rebuild drops every row and with it every expander's state, so the
+     * open folders are carried across by hand. Without this, creating a
+     * document at the bottom of a book would fold the whole binder shut. */
+    char** was_expanded = binder_panel_expanded_paths(binder);
+
     GListModel* root_model = build_root_model(binder);
 
     /* Ownership runs in a chain: the tree model consumes the root model, the
@@ -588,12 +619,17 @@ void binder_panel_reload(BinderPanel* binder)
     gtk_single_selection_set_can_unselect(selection, TRUE);
     g_signal_connect(selection, "notify::selected-item",
                      G_CALLBACK(on_selection_changed), binder);
+    g_signal_connect(tree_model, "items-changed",
+                     G_CALLBACK(on_tree_items_changed), binder);
 
     binder->tree_model = tree_model;
     binder->selection  = selection;
 
     gtk_list_view_set_model(binder->list_view, GTK_SELECTION_MODEL(selection));
     g_object_unref(selection);
+
+    binder_panel_set_expanded_paths(binder, (const char* const*) was_expanded);
+    g_strfreev(was_expanded);
 }
 
 void binder_panel_set_project(BinderPanel* binder, WordsmithProject* project)
@@ -660,6 +696,69 @@ void binder_panel_select_path(BinderPanel* binder, const char* path)
         g_object_unref(item);
         g_object_unref(row);
     }
+}
+
+/* ── expansion ───────────────────────────────────────────────────────────── */
+
+/* Both of these walk the flattened tree, which holds only the rows that are on
+ * screen: a folder inside a collapsed one has no row at all. That is the right
+ * scope for both directions, since what is being carried is what the author can
+ * see. */
+
+char** binder_panel_expanded_paths(BinderPanel* binder)
+{
+    GPtrArray* paths = g_ptr_array_new();
+
+    if (binder != NULL && binder->tree_model != NULL) {
+        const guint count = g_list_model_get_n_items(G_LIST_MODEL(binder->tree_model));
+        for (guint index = 0; index < count; index++) {
+            GtkTreeListRow* row =
+                g_list_model_get_item(G_LIST_MODEL(binder->tree_model), index);
+            if (gtk_tree_list_row_get_expanded(row)) {
+                BinderItem* item = gtk_tree_list_row_get_item(row);
+                g_ptr_array_add(paths, g_strdup(item->path));
+                g_object_unref(item);
+            }
+            g_object_unref(row);
+        }
+    }
+
+    g_ptr_array_add(paths, NULL);
+    return (char**) g_ptr_array_free(paths, FALSE);
+}
+
+void binder_panel_set_expanded_paths(BinderPanel* binder, const char* const* paths)
+{
+    if (binder == NULL || binder->tree_model == NULL || paths == NULL) {
+        return;
+    }
+
+    GHashTable* wanted = g_hash_table_new(g_str_hash, g_str_equal);
+    for (size_t index = 0; paths[index] != NULL; index++) {
+        g_hash_table_add(wanted, (gpointer) paths[index]);
+    }
+
+    /* Opening a folder inserts its children directly after it, so a single
+     * forward pass reaches every depth: a child is always still ahead of the
+     * cursor when its parent opens. The model grows underneath, which is why
+     * the count is re-read each time round. */
+    binder->applying_expansion = TRUE;
+    for (guint index = 0;
+         index < g_list_model_get_n_items(G_LIST_MODEL(binder->tree_model)); index++) {
+        GtkTreeListRow* row =
+            g_list_model_get_item(G_LIST_MODEL(binder->tree_model), index);
+        BinderItem* item = gtk_tree_list_row_get_item(row);
+
+        if (item->is_folder && g_hash_table_contains(wanted, item->path)) {
+            gtk_tree_list_row_set_expanded(row, TRUE);
+        }
+
+        g_object_unref(item);
+        g_object_unref(row);
+    }
+    binder->applying_expansion = FALSE;
+
+    g_hash_table_destroy(wanted);
 }
 
 /* ── lifecycle ───────────────────────────────────────────────────────────── */
@@ -738,4 +837,11 @@ void binder_panel_set_move_callback(BinderPanel* binder, BinderMoveFn callback,
 {
     binder->move_callback  = callback;
     binder->move_user_data = user_data;
+}
+
+void binder_panel_set_expand_callback(BinderPanel* binder, BinderExpandFn callback,
+                                      void* user_data)
+{
+    binder->expand_callback  = callback;
+    binder->expand_user_data = user_data;
 }

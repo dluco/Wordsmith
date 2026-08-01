@@ -37,6 +37,11 @@ typedef enum BinderDropZone {
 typedef void (*BinderMoveFn)(const char* source_path, const char* target_path,
                              BinderDropZone zone, void* user_data);
 
+/* Fired when the set of twisted-open folders changes. The panel does not know
+ * what that is worth, only that it happened; whoever does can ask for the list
+ * below. */
+typedef void (*BinderExpandFn)(void* user_data);
+
 BinderPanel* binder_panel_new(void);
 void         binder_panel_free(BinderPanel* binder);
 
@@ -49,6 +54,9 @@ void binder_panel_set_select_callback(BinderPanel* binder,
 
 void binder_panel_set_move_callback(BinderPanel* binder, BinderMoveFn callback,
                                     void* user_data);
+
+void binder_panel_set_expand_callback(BinderPanel* binder, BinderExpandFn callback,
+                                      void* user_data);
 
 /** Point the binder at a project, or NULL to empty it. The project is borrowed
  *  and must outlive the panel's use of it. Rebuilds the tree. */
@@ -66,3 +74,16 @@ char* binder_panel_target_folder(BinderPanel* binder);
 /** Select the document at `path` if it is in the tree, expanding ancestors as
  *  needed. */
 void binder_panel_select_path(BinderPanel* binder, const char* path);
+
+/** The folders currently twisted open, as absolute paths, NULL-terminated.
+ *  Never NULL. Caller frees with g_strfreev().
+ *
+ *  A folder inside a collapsed one is not listed: it is not on screen, and the
+ *  point of the list is to put back what was. */
+char** binder_panel_expanded_paths(BinderPanel* binder);
+
+/** Twist open the folders named in `paths`, a NULL-terminated array of absolute
+ *  paths, leaving the rest as they are. Names with no folder behind them are
+ *  ignored, so a list that has drifted gives a partly-opened binder rather than
+ *  a failure. Does not fire the expand callback. */
+void binder_panel_set_expanded_paths(BinderPanel* binder, const char* const* paths);
