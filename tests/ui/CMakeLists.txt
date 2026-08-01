@@ -23,3 +23,18 @@ target_link_libraries(wordsmith-text-scale-tests PRIVATE
 target_include_directories(wordsmith-text-scale-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME wordsmith-text-scale-tests COMMAND wordsmith-text-scale-tests)
+
+# Headless too: editor_composition_margin() is arithmetic over a width, which
+# is why it is split out of the resize handler that applies it.
+add_executable(wordsmith-composition-tests
+    test-composition.c
+)
+
+target_link_libraries(wordsmith-composition-tests PRIVATE
+    wordsmith-ui
+    gtk4_lib
+)
+
+target_include_directories(wordsmith-composition-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME wordsmith-composition-tests COMMAND wordsmith-composition-tests)

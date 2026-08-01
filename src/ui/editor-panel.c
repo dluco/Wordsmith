@@ -27,6 +27,10 @@ struct EditorPanel {
      * understood therefore costs the author nothing. */
     char* prologue;
 
+    /* Composition mode draws the text as a centred column, so the side margins
+     * stop being a constant and have to follow the pane's width. */
+    gboolean composing;
+
     GtkTextTag* inline_tags[INLINE_TAG_COUNT];
     GtkTextTag* heading_tags[MAX_HEADING_LEVEL];
     GtkTextTag* quote_tag;
@@ -585,6 +589,53 @@ void editor_panel_paste(EditorPanel* editor)
                                     gtk_text_view_get_editable(editor->view));
 }
 
+/* ── composition mode ────────────────────────────────────────────────────── */
+
+int editor_composition_margin(int width, int column)
+{
+    const int margin = (width - column) / 2;
+    return margin > EDITOR_SIDE_MARGIN ? margin : EDITOR_SIDE_MARGIN;
+}
+
+static void apply_margins(EditorPanel* editor)
+{
+    const int margin =
+        editor->composing
+            ? editor_composition_margin(gtk_widget_get_width(GTK_WIDGET(editor->view)),
+                                        EDITOR_COMPOSITION_COLUMN)
+            : EDITOR_SIDE_MARGIN;
+
+    gtk_text_view_set_left_margin(editor->view, margin);
+    gtk_text_view_set_right_margin(editor->view, margin);
+}
+
+/* The scroller's horizontal adjustment reports the visible width, and changes
+ * to it are the only notification a plain GtkTextView gets that it has been
+ * resized — GTK4 has no size-allocate signal, and subclassing the view to
+ * override the vfunc would buy nothing else. The page size is 0 before the
+ * first allocation, which editor_composition_margin() reads as too narrow for
+ * a column and answers with the ordinary margin. */
+static void on_visible_width_changed(GObject* adjustment, GParamSpec* spec,
+                                     gpointer user_data)
+{
+    (void) adjustment;
+    (void) spec;
+
+    EditorPanel* editor = user_data;
+    if (editor->composing) {
+        apply_margins(editor);
+    }
+}
+
+void editor_panel_set_composition(EditorPanel* editor, gboolean composing)
+{
+    if (editor == NULL || editor->composing == composing) {
+        return;
+    }
+    editor->composing = composing;
+    apply_margins(editor);
+}
+
 /* ── lifecycle ───────────────────────────────────────────────────────────── */
 
 static void on_buffer_modified(GtkTextBuffer* buffer, gpointer user_data)
@@ -606,8 +657,8 @@ EditorPanel* editor_panel_new(void)
     editor->buffer = gtk_text_view_get_buffer(editor->view);
 
     gtk_text_view_set_wrap_mode(editor->view, GTK_WRAP_WORD_CHAR);
-    gtk_text_view_set_left_margin(editor->view, 48);
-    gtk_text_view_set_right_margin(editor->view, 48);
+    gtk_text_view_set_left_margin(editor->view, EDITOR_SIDE_MARGIN);
+    gtk_text_view_set_right_margin(editor->view, EDITOR_SIDE_MARGIN);
     gtk_text_view_set_top_margin(editor->view, 32);
     gtk_text_view_set_bottom_margin(editor->view, 32);
     gtk_text_view_set_pixels_below_lines(editor->view, 8);
@@ -624,6 +675,10 @@ EditorPanel* editor_panel_new(void)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), view);
+
+    g_signal_connect(
+        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(scroller)),
+        "notify::page-size", G_CALLBACK(on_visible_width_changed), editor);
 
     editor->root = scroller;
     return editor;

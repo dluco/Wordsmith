@@ -824,6 +824,19 @@ GtkWidget* binder_panel_widget(BinderPanel* binder)
     return binder != NULL ? binder->root : NULL;
 }
 
+void binder_panel_set_visible(BinderPanel* binder, gboolean visible)
+{
+    if (binder == NULL) {
+        return;
+    }
+    gtk_widget_set_visible(binder->root, visible);
+}
+
+gboolean binder_panel_is_visible(BinderPanel* binder)
+{
+    return binder != NULL && gtk_widget_get_visible(binder->root);
+}
+
 void binder_panel_set_select_callback(BinderPanel* binder,
                                       BinderSelectFn callback,
                                       void* user_data)

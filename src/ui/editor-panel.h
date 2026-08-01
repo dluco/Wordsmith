@@ -19,6 +19,15 @@
  * metadata, and saving puts the original bytes back ahead of the body. */
 typedef struct EditorPanel EditorPanel;
 
+/* The ordinary gap between the text and the edge of the pane. */
+#define EDITOR_SIDE_MARGIN 48
+
+/* How wide the text column is in composition mode. Sixty-odd characters at the
+ * default size, which is where prose stops being a chore to track back across.
+ * Fixed for now; if it becomes settable it belongs in preferences.hpp with the
+ * text size, since it describes the reader rather than the manuscript. */
+#define EDITOR_COMPOSITION_COLUMN 700
+
 /* Fired when the document's modified flag changes, so the window can retitle. */
 typedef void (*EditorModifiedFn)(int modified, void* user_data);
 
@@ -60,6 +69,27 @@ gboolean editor_panel_is_modified(EditorPanel* editor);
 /** Toggle one WORDSMITH_MARKUP_SPAN_* style over the selection. Does nothing
  *  when the selection is empty. */
 void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag);
+
+/* Composition mode's side of the editor: the text draws as a column of fixed
+ * width in the middle of the pane, however wide the pane has become.
+ *
+ * The column is made of the view's own left and right margins rather than a
+ * width on the widget, because GTK's CSS has no `max-width` and putting the
+ * view in something narrower would mean wrapping it in a viewport — which costs
+ * GtkTextView its line-by-line layout, and a novel is exactly the document that
+ * cannot afford to be laid out all at once. So the margins are recomputed
+ * whenever the pane's width changes. */
+
+/** Draw the text as a centred column, or go back to the ordinary margins. */
+void editor_panel_set_composition(EditorPanel* editor, gboolean composing);
+
+/** The side margin that centres a column `column` wide inside a pane `width`
+ *  pixels across, never tighter than EDITOR_SIDE_MARGIN — a window too narrow
+ *  for the column gets the ordinary margins rather than a negative one.
+ *
+ *  Split out from applying it so the arithmetic can be checked without a
+ *  display, the way text_scale_css() is. */
+int editor_composition_margin(int width, int column);
 
 /* Editing verbs behind the Edit menu. The window registers accelerators for
  * these, and an application accelerator outranks GtkTextView's own key

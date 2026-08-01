@@ -26,6 +26,11 @@ typedef struct WordsmithUiState {
      * back from counting as a change to it. */
     guint    session_source;
     gboolean restoring_session;
+
+    /* Composition mode, and the panes to put back when it ends. */
+    gboolean composing;
+    gboolean binder_shown_before_composing;
+    gboolean inspector_shown_before_composing;
 } WordsmithUiState;
 
 WordsmithUiState* ui_state_new(void);
@@ -48,6 +53,26 @@ void ui_state_update_title(WordsmithUiState* state);
  *  Harmless with no project open — there is simply nowhere to write it down,
  *  and the pane comes back visible next launch. */
 void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible);
+
+/* Composition mode: the manuscript alone, full screen.
+ *
+ * It is a mode rather than a preference, so nothing about it is written down —
+ * it ends with the sitting. Both side panes and the menu bar go away, and the
+ * editor draws its text as a centred column.
+ *
+ * The panes are hidden *underneath* the author's standing answer rather than by
+ * changing it: the inspector's answer stays in the session and its check mark
+ * stays where they left it, unreachable behind a hidden menu bar, and both
+ * panes come back the way they were on the way out. Composition mode therefore
+ * calls the panels directly and never ui_state_set_inspector_visible(), which
+ * would write "dismissed" into the session on the way in. */
+
+/** Enter or leave composition mode. Toggling to the mode already in force does
+ *  nothing, so the panes to restore are only ever captured once. */
+void ui_state_set_composition_mode(WordsmithUiState* state, gboolean composing);
+
+/** Whether composition mode is in force. */
+gboolean ui_state_in_composition_mode(WordsmithUiState* state);
 
 /* Which folders are open in the binder, which document is being edited, and
  * whether the inspector is on screen are remembered per project, outside it,

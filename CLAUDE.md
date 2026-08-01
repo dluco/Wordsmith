@@ -224,6 +224,45 @@ placement testable without a display.
 Round-tripping is not byte-for-byte lossless (wrapped paragraphs fold into one
 line, markers normalise), but it reaches a fixed point after one pass.
 
+### Composition mode
+
+The manuscript alone, full screen: both side panes and the menu bar go away, the
+window goes full screen, and the editor draws its text as a centred column.
+`win.composition-mode` is a stateful toggle on F11, and Escape leaves as well —
+a mode that hides the menu bar has to be escapable without it. Escape goes
+through the action rather than calling `ui-state` directly, so the check mark
+behind the hidden menu bar comes back right, and the key controller sits in the
+bubble phase so anything focused that wants Escape gets it first.
+
+It is a **mode, not a preference**: nothing about it is written down, and it
+ends with the sitting.
+
+The centred column is made of the text view's own left and right margins,
+recomputed by `editor_composition_margin()` whenever the pane's width changes.
+Not CSS — GTK's CSS has no `max-width`; and not a narrower widget around the
+view, which would need a viewport and cost `GtkTextView` its line-by-line
+layout, on exactly the document that cannot afford to be laid out all at once.
+The resize signal is the scroller's hadjustment `notify::page-size`, GTK4 having
+no size-allocate signal. `editor_composition_margin()` is the display-free seam
+the UI test checks, and it falls back to the ordinary margin whenever the pane
+is too narrow for the column — including the width of 0 before the first
+allocation.
+
+**The panes are hidden underneath the author's answer, never by changing it.**
+The inspector's entry in the session and its check mark both stay where they
+were, and both panes come back the way they were on the way in
+(`binder_shown_before_composing` and its sibling). Two consequences that are
+easy to get wrong, and did not work until they were handled:
+
+- `ui_state_set_inspector_visible()` records the new answer without moving the
+  pane while composing. Otherwise restoring a session — Ctrl+O still works with
+  the menu bar hidden — puts the inspector on screen in the middle of the mode.
+- `save_session_now()` writes `inspector_answer()`, not
+  `inspector_panel_is_visible()`. Reading the widget would record "dismissed"
+  for anyone who quits from composition mode and lose them the pane for good.
+
+Anything else that comes to be hidden by the mode inherits both rules.
+
 ### UI wiring
 
 `WordsmithUiState` is shared per-window state; panels borrow it and never own it.

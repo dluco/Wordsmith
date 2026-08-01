@@ -65,6 +65,35 @@ static void on_binder_expanded(void* user_data)
     ui_state_remember_session(user_data);
 }
 
+/* Escape leaves composition mode, because a mode that hides the menu bar has to
+ * be escapable without it, and F11 alone is a thing to have to know.
+ *
+ * It goes through the action rather than calling ui_state directly, so the
+ * check mark behind the hidden menu bar comes back right. Anywhere else Escape
+ * is none of the window's business and is let through — the editor and any
+ * dialog on top of it want it.
+ *
+ * The controller sits in the bubble phase so the focused widget answers first;
+ * nothing in the editor claims Escape today, but a completion popup or a search
+ * bar would, and it should close before the mode does. */
+static gboolean on_window_key_pressed(GtkEventControllerKey* controller,
+                                      guint keyval, guint keycode,
+                                      GdkModifierType modifiers, gpointer user_data)
+{
+    (void) controller;
+    (void) keycode;
+    (void) modifiers;
+
+    if (keyval != GDK_KEY_Escape || !ui_state_in_composition_mode(user_data)) {
+        return GDK_EVENT_PROPAGATE;
+    }
+
+    WordsmithUiState* state = user_data;
+    g_action_group_activate_action(G_ACTION_GROUP(state->window),
+                                   "composition-mode", NULL);
+    return GDK_EVENT_STOP;
+}
+
 /* Committing on close keeps the binder-click behaviour consistent: edits are
  * never dropped without the author asking for it. The view goes down with the
  * same gesture, since a pending write would otherwise die with the window. */
@@ -134,6 +163,11 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     gtk_paned_set_position(GTK_PANED(binder_paned), BINDER_DEFAULT_WIDTH);
 
     gtk_window_set_child(GTK_WINDOW(window), binder_paned);
+
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_BUBBLE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(on_window_key_pressed), state);
+    gtk_widget_add_controller(window, keys);
 
     g_signal_connect(window, "close-request",
                      G_CALLBACK(on_window_close_request), state);

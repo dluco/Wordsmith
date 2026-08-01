@@ -48,6 +48,17 @@ void         binder_panel_free(BinderPanel* binder);
 /* Borrowed. Owned by the widget hierarchy once parented. */
 GtkWidget* binder_panel_widget(BinderPanel* binder);
 
+/** Put the pane on screen, or away. Hiding it hides its side of the GtkPaned
+ *  holding it, so the rest of the window takes the width and the divider goes
+ *  with it; GtkPaned keeps the divider's position while a child is hidden.
+ *
+ *  A hidden binder keeps its model and its selection. Composition mode is what
+ *  uses this today; the View menu's Show Binder is still a stub. */
+void binder_panel_set_visible(BinderPanel* binder, gboolean visible);
+
+/** Whether the pane is on screen. */
+gboolean binder_panel_is_visible(BinderPanel* binder);
+
 void binder_panel_set_select_callback(BinderPanel* binder,
                                       BinderSelectFn callback,
                                       void* user_data);

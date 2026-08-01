@@ -197,6 +197,12 @@ static void on_show_inspector(GSimpleAction* action, GVariant* value, gpointer u
     ui_state_set_inspector_visible(user, g_variant_get_boolean(value));
 }
 
+static void on_composition_mode(GSimpleAction* action, GVariant* value, gpointer user)
+{
+    g_simple_action_set_state(action, value);
+    ui_state_set_composition_mode(user, g_variant_get_boolean(value));
+}
+
 static void on_about(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
@@ -266,7 +272,6 @@ static const ActionSpec ACTIONS[] = {
     { "view-document",    G_CALLBACK(on_stub_action),      NULL                },
     { "view-corkboard",   G_CALLBACK(on_stub_action),      NULL                },
     { "view-outliner",    G_CALLBACK(on_stub_action),      NULL                },
-    { "composition-mode", G_CALLBACK(on_stub_action),      "F11"               },
     { "text-size-increase", G_CALLBACK(on_text_size_increase), "<Control>plus",
       "<Control>equal" },
     { "text-size-decrease", G_CALLBACK(on_text_size_decrease), "<Control>minus" },
@@ -294,8 +299,9 @@ static const ActionSpec TARGETED_ACTIONS[] = {
     { "new-folder-with-selection",  G_CALLBACK(on_new_folder_with_selection),  NULL },
 };
 
-/* Stateful toggles for the two side panes: boolean state, no parameter, both
- * starting on because both panes start on screen.
+/* Stateful toggles: boolean state, no parameter, and an initial state that says
+ * where the thing starts — the side panes are on screen at launch, composition
+ * mode is not.
  *
  * The signal is part of the spec because a toggle that works and a toggle that
  * does not are wired differently. A working one takes "change-state" and leaves
@@ -306,16 +312,21 @@ typedef struct ToggleSpec {
     const char* name;
     const char* signal;
     GCallback   callback;
+    gboolean    initial_state;
     const char* accel; /* NULL when the toggle has no keyboard shortcut */
 } ToggleSpec;
 
 static const ToggleSpec TOGGLE_ACTIONS[] = {
-    { "show-binder",    "activate",     G_CALLBACK(on_stub_action),    NULL },
+    { "show-binder",    "activate",     G_CALLBACK(on_stub_action),    TRUE, NULL },
     /* Shift+Ctrl+I sits next to Ctrl+I for italic on purpose: the inspector is
      * the other thing an author reaches for while their hands are on the
      * keyboard, and the pair is easier to keep than two unrelated chords. */
-    { "show-inspector", "change-state", G_CALLBACK(on_show_inspector),
+    { "show-inspector", "change-state", G_CALLBACK(on_show_inspector), TRUE,
       "<Control><Shift>i" },
+    /* F11 is the full-screen key everywhere else, and this is what full screen
+     * means in a manuscript editor. Escape leaves as well; see main-window.c. */
+    { "composition-mode", "change-state", G_CALLBACK(on_composition_mode), FALSE,
+      "F11" },
 };
 
 static void install_actions(WordsmithUiState* state, GtkApplication* app)
@@ -348,8 +359,8 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
     for (gsize index = 0; index < G_N_ELEMENTS(TOGGLE_ACTIONS); index++) {
         const ToggleSpec* spec = &TOGGLE_ACTIONS[index];
 
-        GSimpleAction* action =
-            g_simple_action_new_stateful(spec->name, NULL, g_variant_new_boolean(TRUE));
+        GSimpleAction* action = g_simple_action_new_stateful(
+            spec->name, NULL, g_variant_new_boolean(spec->initial_state));
         g_signal_connect(action, spec->signal, spec->callback, state);
         g_action_map_add_action(G_ACTION_MAP(state->window), G_ACTION(action));
         g_object_unref(action);

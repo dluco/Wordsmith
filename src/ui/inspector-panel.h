@@ -69,9 +69,12 @@ void inspector_panel_set_commit_callback(InspectorPanel* inspector,
  *  the pane comes back the width the author last dragged it to. */
 void inspector_panel_set_visible(InspectorPanel* inspector, gboolean visible);
 
-/** Whether the pane is on screen. This is what gets written down when the view
- *  is remembered, so it reads the widget rather than a flag beside it: the
- *  widget is the one copy that cannot be out of date. */
+/** Whether the pane is on screen — the widget, not a flag beside it, so it
+ *  cannot fall out of date.
+ *
+ *  Note this is not the same question as whether the author wants the pane:
+ *  composition mode holds it off screen without changing their answer. What
+ *  gets remembered is the answer, which ui-state.c keeps. */
 gboolean inspector_panel_is_visible(InspectorPanel* inspector);
 
 /** Show the frontmatter of the document at `path`. Reading it is cheap and

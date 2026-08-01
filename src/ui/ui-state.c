@@ -54,11 +54,76 @@ void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible)
                                   g_variant_new_boolean(visible));
     }
 
-    inspector_panel_set_visible(state->inspector, visible);
+    /* While composing, both panes are held off screen whatever the answer is,
+     * so a change to it only decides what comes back at the end. Moving the
+     * pane here would put the inspector on screen in the middle of the mode —
+     * which is what restoring a session does, and Ctrl+O still works with the
+     * menu bar hidden. */
+    if (state->composing) {
+        state->inspector_shown_before_composing = visible;
+    } else {
+        inspector_panel_set_visible(state->inspector, visible);
+    }
+
     ui_state_remember_session(state);
 }
 
+/* ── composition mode ────────────────────────────────────────────────────── */
+
+void ui_state_set_composition_mode(WordsmithUiState* state, gboolean composing)
+{
+    if (state->composing == composing) {
+        return;
+    }
+    state->composing = composing;
+
+    if (composing) {
+        /* Before hiding them, so leaving puts back what the author had rather
+         * than what composition mode left. */
+        state->binder_shown_before_composing =
+            binder_panel_is_visible(state->binder);
+        state->inspector_shown_before_composing =
+            inspector_panel_is_visible(state->inspector);
+
+        binder_panel_set_visible(state->binder, FALSE);
+        inspector_panel_set_visible(state->inspector, FALSE);
+    } else {
+        binder_panel_set_visible(state->binder,
+                                 state->binder_shown_before_composing);
+        inspector_panel_set_visible(state->inspector,
+                                    state->inspector_shown_before_composing);
+    }
+
+    editor_panel_set_composition(state->editor, composing);
+
+    if (state->window == NULL) {
+        return;
+    }
+    gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(state->window),
+                                            !composing);
+    if (composing) {
+        gtk_window_fullscreen(state->window);
+    } else {
+        gtk_window_unfullscreen(state->window);
+    }
+}
+
+gboolean ui_state_in_composition_mode(WordsmithUiState* state)
+{
+    return state != NULL && state->composing;
+}
+
 /* ── session ─────────────────────────────────────────────────────────────── */
+
+/* The author's standing answer about the inspector, which is not the same as
+ * whether the pane is on screen: composition mode holds it off screen without
+ * changing the answer. Reading the widget here would write "dismissed" into the
+ * session for anyone who quits from composition mode, and lose them the pane. */
+static gboolean inspector_answer(WordsmithUiState* state)
+{
+    return state->composing ? state->inspector_shown_before_composing
+                            : inspector_panel_is_visible(state->inspector);
+}
 
 static void save_session_now(WordsmithUiState* state)
 {
@@ -73,7 +138,7 @@ static void save_session_now(WordsmithUiState* state)
                                 editor_panel_path(state->editor),
                                 (const char* const*) expanded,
                                 g_strv_length(expanded),
-                                inspector_panel_is_visible(state->inspector),
+                                inspector_answer(state),
                                 &error)) {
         /* A view that does not come back is not worth a dialog in the author's
          * way, and there is nothing they could do about it if it were. */
