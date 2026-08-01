@@ -307,11 +307,16 @@ typedef struct ToggleSpec {
     const char* name;
     const char* signal;
     GCallback   callback;
+    const char* accel; /* NULL when the toggle has no keyboard shortcut */
 } ToggleSpec;
 
 static const ToggleSpec TOGGLE_ACTIONS[] = {
-    { "show-binder",    "activate",     G_CALLBACK(on_stub_action)    },
-    { "show-inspector", "change-state", G_CALLBACK(on_show_inspector) },
+    { "show-binder",    "activate",     G_CALLBACK(on_stub_action),    NULL },
+    /* Shift+Ctrl+I sits next to Ctrl+I for italic on purpose: the inspector is
+     * the other thing an author reaches for while their hands are on the
+     * keyboard, and the pair is easier to keep than two unrelated chords. */
+    { "show-inspector", "change-state", G_CALLBACK(on_show_inspector),
+      "<Control><Shift>i" },
 };
 
 static void install_actions(WordsmithUiState* state, GtkApplication* app)
@@ -349,6 +354,13 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
         g_signal_connect(action, spec->signal, spec->callback, state);
         g_action_map_add_action(G_ACTION_MAP(state->window), G_ACTION(action));
         g_object_unref(action);
+
+        if (spec->accel != NULL) {
+            char* detailed = g_strconcat("win.", spec->name, NULL);
+            const char* accels[] = { spec->accel, NULL };
+            gtk_application_set_accels_for_action(app, detailed, accels);
+            g_free(detailed);
+        }
     }
 }
 
