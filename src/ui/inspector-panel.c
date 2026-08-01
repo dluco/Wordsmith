@@ -540,6 +540,14 @@ GtkWidget* inspector_panel_widget(InspectorPanel* inspector)
     return inspector != NULL ? inspector->root : NULL;
 }
 
+void inspector_panel_set_visible(InspectorPanel* inspector, gboolean visible)
+{
+    if (inspector == NULL) {
+        return;
+    }
+    gtk_widget_set_visible(inspector->root, visible);
+}
+
 void inspector_panel_set_commit_callback(InspectorPanel* inspector,
                                          InspectorCommitFn callback,
                                          void* user_data)

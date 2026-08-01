@@ -1,6 +1,7 @@
 #include "menu-bar.h"
 
 #include "editor-panel.h"
+#include "inspector-panel.h"
 #include "project-actions.h"
 #include "text-scale.h"
 
@@ -183,6 +184,20 @@ static void on_text_size_reset(GSimpleAction* action, GVariant* param, gpointer 
     set_text_scale(user, WORDSMITH_TEXT_SCALE_DEFAULT_PERCENT);
 }
 
+/* A pane toggle answers "change-state" rather than "activate". Left alone,
+ * GSimpleAction's own activate flips a boolean state and emits change-state
+ * with the new value, which is where the check mark in the menu comes from;
+ * taking activate over — as the stub handler does — stops the flip and the
+ * mark with it. So the mark and the pane stay in step here by setting the
+ * state and acting on the same value. */
+static void on_show_inspector(GSimpleAction* action, GVariant* value, gpointer user)
+{
+    g_simple_action_set_state(action, value);
+
+    WordsmithUiState* state = user;
+    inspector_panel_set_visible(state->inspector, g_variant_get_boolean(value));
+}
+
 static void on_about(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
@@ -280,11 +295,23 @@ static const ActionSpec TARGETED_ACTIONS[] = {
     { "new-folder-with-selection",  G_CALLBACK(on_new_folder_with_selection),  NULL },
 };
 
-/* Stateful toggles for the two side panes. The window reads these back when
- * it wires up pane visibility. */
-static const char* const TOGGLE_ACTIONS[] = {
-    "show-binder",
-    "show-inspector",
+/* Stateful toggles for the two side panes: boolean state, no parameter, both
+ * starting on because both panes start on screen.
+ *
+ * The signal is part of the spec because a toggle that works and a toggle that
+ * does not are wired differently. A working one takes "change-state" and leaves
+ * activate to GSimpleAction, which is what flips the state; a stub takes
+ * "activate" instead, which stops the flip, so the menu keeps showing the pane
+ * as it actually is rather than following a click that did nothing. */
+typedef struct ToggleSpec {
+    const char* name;
+    const char* signal;
+    GCallback   callback;
+} ToggleSpec;
+
+static const ToggleSpec TOGGLE_ACTIONS[] = {
+    { "show-binder",    "activate",     G_CALLBACK(on_stub_action)    },
+    { "show-inspector", "change-state", G_CALLBACK(on_show_inspector) },
 };
 
 static void install_actions(WordsmithUiState* state, GtkApplication* app)
@@ -315,9 +342,11 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
     }
 
     for (gsize index = 0; index < G_N_ELEMENTS(TOGGLE_ACTIONS); index++) {
-        GSimpleAction* action = g_simple_action_new_stateful(
-            TOGGLE_ACTIONS[index], NULL, g_variant_new_boolean(TRUE));
-        g_signal_connect(action, "activate", G_CALLBACK(on_stub_action), state);
+        const ToggleSpec* spec = &TOGGLE_ACTIONS[index];
+
+        GSimpleAction* action =
+            g_simple_action_new_stateful(spec->name, NULL, g_variant_new_boolean(TRUE));
+        g_signal_connect(action, spec->signal, spec->callback, state);
         g_action_map_add_action(G_ACTION_MAP(state->window), G_ACTION(action));
         g_object_unref(action);
     }

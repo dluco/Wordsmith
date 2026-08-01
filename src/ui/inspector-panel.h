@@ -27,7 +27,13 @@
  * The panel does not write anything itself. A committed edit is reported
  * through InspectorCommitFn, because the file behind it may also be open in the
  * editor, and getting that right means ordering a save against a rewrite —
- * which is project-actions.c's job, not this pane's. */
+ * which is project-actions.c's job, not this pane's.
+ *
+ * The pane can be put away (View ▸ Show Inspector). Hidden it is still loaded
+ * and still following the binder's selection, because what it costs to keep up
+ * to date is one read of a file already on disk, and coming back to a pane
+ * showing the last document visited before it was dismissed would be a lie
+ * about what is open. */
 typedef struct InspectorPanel InspectorPanel;
 
 /* One committed field edit.
@@ -56,6 +62,12 @@ GtkWidget* inspector_panel_widget(InspectorPanel* inspector);
 void inspector_panel_set_commit_callback(InspectorPanel* inspector,
                                          InspectorCommitFn callback,
                                          void* user_data);
+
+/** Put the pane on screen, or away. Hiding the pane hides its side of the
+ *  GtkPaned holding it: the editor takes the whole width and the divider goes
+ *  with it. GtkPaned keeps the divider's position while a child is hidden, so
+ *  the pane comes back the width the author last dragged it to. */
+void inspector_panel_set_visible(InspectorPanel* inspector, gboolean visible);
 
 /** Show the frontmatter of the document at `path`. Reading it is cheap and
  *  keeps the inspector honest about what is on disk rather than what the editor
