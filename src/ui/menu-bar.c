@@ -2,8 +2,10 @@
 
 #include "editor-panel.h"
 #include "project-actions.h"
+#include "text-scale.h"
 
 #include "core/markup-c.h"
+#include "core/preferences-c.h"
 #include "core/wordsmith-core-c.h"
 
 struct MenuBar {
@@ -149,6 +151,38 @@ static void on_format_underline(GSimpleAction* action, GVariant* param, gpointer
     toggle_style(user, WORDSMITH_MARKUP_SPAN_UNDERLINE);
 }
 
+/* Text size is an application preference, so the three verbs read the size in
+ * force rather than a per-window one, and a failure to save it is worth a word:
+ * the pane looks right until the next launch. */
+static void set_text_scale(gpointer user, int percent)
+{
+    char* error = NULL;
+    if (!text_scale_set(percent, &error)) {
+        ui_state_report_error(user, "Cannot save the text size", error);
+    }
+}
+
+static void on_text_size_increase(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    set_text_scale(user, text_scale_percent() + TEXT_SCALE_STEP_PERCENT);
+}
+
+static void on_text_size_decrease(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    set_text_scale(user, text_scale_percent() - TEXT_SCALE_STEP_PERCENT);
+}
+
+static void on_text_size_reset(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+    set_text_scale(user, WORDSMITH_TEXT_SCALE_DEFAULT_PERCENT);
+}
+
 static void on_about(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
@@ -183,6 +217,10 @@ typedef struct ActionSpec {
     const char* name;
     GCallback   callback;
     const char* accel; /* NULL when the action has no keyboard shortcut */
+    /* A second binding for the same action, or NULL. Only the text size needs
+     * one: Ctrl+plus is Ctrl+Shift+equal on most layouts, and every editor
+     * accepts the unshifted key as well. */
+    const char* alternate_accel;
 } ActionSpec;
 
 static const ActionSpec ACTIONS[] = {
@@ -215,6 +253,10 @@ static const ActionSpec ACTIONS[] = {
     { "view-corkboard",   G_CALLBACK(on_stub_action),      NULL                },
     { "view-outliner",    G_CALLBACK(on_stub_action),      NULL                },
     { "composition-mode", G_CALLBACK(on_stub_action),      "F11"               },
+    { "text-size-increase", G_CALLBACK(on_text_size_increase), "<Control>plus",
+      "<Control>equal" },
+    { "text-size-decrease", G_CALLBACK(on_text_size_decrease), "<Control>minus" },
+    { "text-size-reset",    G_CALLBACK(on_text_size_reset),    "<Control>0"     },
 
     /* Project */
     { "project-targets",    G_CALLBACK(on_stub_action),    NULL                },
@@ -257,7 +299,7 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
 
         if (spec->accel != NULL) {
             char* detailed = g_strconcat("win.", spec->name, NULL);
-            const char* accels[] = { spec->accel, NULL };
+            const char* accels[] = { spec->accel, spec->alternate_accel, NULL };
             gtk_application_set_accels_for_action(app, detailed, accels);
             g_free(detailed);
         }
@@ -362,6 +404,13 @@ static GMenuModel* build_menu_model(void)
     g_menu_append(view_pane_section, "Show Inspector", "win.show-inspector");
     g_menu_append_section(view_menu, NULL, G_MENU_MODEL(view_pane_section));
     g_object_unref(view_pane_section);
+
+    GMenu* view_text_size_section = g_menu_new();
+    g_menu_append(view_text_size_section, "Increase Text Size", "win.text-size-increase");
+    g_menu_append(view_text_size_section, "Decrease Text Size", "win.text-size-decrease");
+    g_menu_append(view_text_size_section, "Reset Text Size", "win.text-size-reset");
+    g_menu_append_section(view_menu, NULL, G_MENU_MODEL(view_text_size_section));
+    g_object_unref(view_text_size_section);
 
     GMenu* view_mode_full_section = g_menu_new();
     g_menu_append(view_mode_full_section, "Composition Mode", "win.composition-mode");

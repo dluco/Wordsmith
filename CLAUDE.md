@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and test
 
-Dependencies: GTK4 (via pkg-config), `glib-compile-resources`, CMake ≥ 3.31. The
+Dependencies: GTK4 ≥ 4.12 (via pkg-config), `glib-compile-resources`, CMake ≥ 3.31. The
 `argo` JSON library is a git submodule — `git submodule update --init` before a
 first build.
 
 ```sh
 cmake --preset debug                 # configure into cmake-build-debug/
 cmake --build --preset debug         # build everything
-ctest --preset debug                 # run all six suites
+ctest --preset debug                 # run every suite
 ctest --preset debug -R yaml         # run one suite by name
 ./cmake-build-debug/src/driver/wordsmith [project-dir]   # run the app
 ```
@@ -114,6 +114,26 @@ order is the history**: `snapshots()` sorts by name and eviction drops from the
 front. The counter therefore climbs past whatever exists rather than filling the
 gap eviction just made — reusing a freed name reorders history and evicts the
 wrong version next time.
+
+### Preferences
+
+Anything describing the person rather than the manuscript lives outside every
+project, in `$XDG_CONFIG_HOME/wordsmith/settings.json` (`~/.config/...` when that
+is unset). `preferences.cpp` reads and writes it, through the same
+`write_file_atomically()` as everything else. A project directory travels, so
+nothing about how one author likes to read may ride along inside it.
+
+Reading that file never fails: missing, unreadable or malformed gives defaults,
+and out-of-range values are clamped rather than refused. It is not the author's
+work, and refusing to start over it would cost more than it saves. Saving
+re-emits the whole file from the struct, so a key a newer build wrote is dropped
+by an older one, the same trade `project.wordsmith` makes.
+
+The editor's text size is the first such preference. It is applied the way the
+stylesheet is, through one CSS provider on the display carrying a `font-size`
+rule scoped to `.editor-pane` (`ui/text-scale.c`), rather than per panel: the
+size is one answer for the whole application, restored before any window exists.
+`text_scale_css()` is the display-free seam the UI test parses.
 
 ### Frontmatter: surgical, never lossy
 

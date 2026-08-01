@@ -1,6 +1,8 @@
 find_package(PkgConfig QUIET REQUIRED)
 
-pkg_check_modules(GTK4 QUIET REQUIRED gtk4)
+# 4.12 for gtk_css_provider_load_from_string(), which text-scale.c uses to
+# rebuild its rule; the load_from_data() it replaced is deprecated from there on.
+pkg_check_modules(GTK4 QUIET REQUIRED gtk4>=4.12)
 
 add_library(gtk4_lib INTERFACE IMPORTED GLOBAL)
 
@@ -65,6 +67,7 @@ target_sources(wordsmith-ui PRIVATE
     binder-panel.c
     editor-panel.c
     inspector-panel.c
+    text-scale.c
 )
 
 target_link_libraries(wordsmith-ui PRIVATE

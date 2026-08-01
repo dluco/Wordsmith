@@ -5,6 +5,8 @@ add_library(wordsmith-core STATIC
     markup-c.cpp
     project.cpp
     project-c.cpp
+    preferences.cpp
+    preferences-c.cpp
     safe-write.cpp
     snapshots.cpp
     yaml.cpp
@@ -27,6 +29,8 @@ target_sources(wordsmith-core PUBLIC
     markup-c.h
     project.hpp
     project-c.h
+    preferences.hpp
+    preferences-c.h
     safe-write.hpp
     snapshots.hpp
     yaml.hpp

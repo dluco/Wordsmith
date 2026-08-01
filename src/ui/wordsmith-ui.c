@@ -1,6 +1,7 @@
 #include "wordsmith-ui.h"
 
 #include "main-window.h"
+#include "text-scale.h"
 
 #include <gtk/gtk.h>
 
@@ -38,6 +39,10 @@ static void on_app_startup(GApplication* app, gpointer user_data)
 
     wordsmith_resources_register_resource();
     load_display_assets();
+
+    /* After the stylesheet, so the saved text size overrides it rather than
+     * being overridden. */
+    text_scale_init();
 }
 
 static void on_app_activate(GApplication* app, gpointer user_data)
