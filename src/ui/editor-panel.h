@@ -1,5 +1,7 @@
 #pragma once
 
+#include "undo-stack.h"
+
 #include <gtk/gtk.h>
 #include <stdint.h>
 
@@ -38,6 +40,10 @@ typedef void (*EditorModifiedFn)(int modified, void* user_data);
  * doing that reading. */
 typedef void (*EditorStylesFn)(uint32_t flags, void* user_data);
 
+/* Fired when the open document's undo history changes, so whoever is showing it
+ * — the Edit menu — never has to poll. */
+typedef void (*EditorHistoryFn)(void* user_data);
+
 EditorPanel* editor_panel_new(void);
 void         editor_panel_free(EditorPanel* editor);
 
@@ -55,6 +61,28 @@ void editor_panel_set_modified_callback(EditorPanel* editor,
 void editor_panel_set_styles_callback(EditorPanel* editor,
                                       EditorStylesFn callback,
                                       void* user_data);
+
+/** Record every edit into `store`, keyed by the open document's path. Borrowed,
+ *  and outlives the document: that is what lets a history survive switching
+ *  away and back.
+ *
+ *  The panel writes into the store directly rather than reporting edits upwards
+ *  the way it reports styles, because when a run of typing ends is something
+ *  only the panel knows — it turns on the cursor moving, not on anything a
+ *  window could see. What it does report is that the history changed, which is
+ *  all the menu needs. */
+void editor_panel_set_undo_store(EditorPanel* editor, UndoStore* store);
+
+void editor_panel_set_history_callback(EditorPanel* editor,
+                                       EditorHistoryFn callback,
+                                       void* user_data);
+
+/** Put one record into or out of the buffer; `reverse` is the undo direction.
+ *  The edit this makes is not itself recorded, or a press would only ever undo
+ *  the press before it. Records of a kind the buffer has nothing to do with —
+ *  metadata — are ignored, and belong to project-actions.c. */
+void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
+                               gboolean reverse);
 
 /** Load `path` into the view. Returns 0 and fills `error` (owned by the
  *  caller, freed with wordsmith_free_string) on failure. */
@@ -156,9 +184,11 @@ int editor_composition_margin(int width, int column);
 /* Editing verbs behind the Edit menu. The window registers accelerators for
  * these, and an application accelerator outranks GtkTextView's own key
  * bindings, so the menu has to drive the buffer itself rather than leave the
- * widget to it. */
-void editor_panel_undo(EditorPanel* editor);
-void editor_panel_redo(EditorPanel* editor);
+ * widget to it.
+ *
+ * Undo and redo are not here: a history holds metadata edits beside text ones,
+ * and applying one of those is not something a text panel can do. Choosing
+ * which record a press addresses is ui_state_undo()'s job. */
 void editor_panel_cut(EditorPanel* editor);
 void editor_panel_copy(EditorPanel* editor);
 void editor_panel_paste(EditorPanel* editor);

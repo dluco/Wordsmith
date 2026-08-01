@@ -346,6 +346,77 @@ without the heading tag, which save reads past — `line_kind()` asks the line's
 first character. That is unchanged, and it is the next thing in this corner
 worth fixing.
 
+### Undo and redo
+
+Wordsmith owns its history rather than borrowing `GtkTextBuffer`'s, which is
+switched off at construction. The built-in stack records text and not tags, so
+Ctrl+B was never undoable, and it died at every `set_text()` in
+`editor_panel_load()`, so switching documents and coming back found nothing to
+take back. `undo-stack.h` carries the full rationale.
+
+**One chronological history per binder item**, holding text, formatting and
+metadata edits in the order they were made, and a press addresses **the
+selection's** history. Not one stack for the window: Ctrl+Z can then never yank
+the view to a document the author had stopped thinking about. A document's
+history holds its text, its formatting and its metadata; a folder's holds only
+metadata, which is all a folder has. Histories are in memory and cleared by
+`ui_state_set_project()` — that is the whole of "session-scoped".
+
+Two things the records carry that they look like they should not, both of which
+are quiet data loss if dropped:
+
+- **Text records carry their tag runs.** Undoing an insert is only a delete, but
+  redoing one has to put back text that may have been bold, and undoing a delete
+  has to restore what the run was wearing. `put_text_back()` clears the inline
+  tags over the range before applying them, because GTK gives inserted text the
+  tags covering the spot — text put back inside a bold word would otherwise come
+  out bold whatever the record says.
+- **Style records carry the tag's prior coverage**, not a boolean.
+  `editor_panel_toggle_style()` makes a mixed selection uniform, so bold over
+  half-bold text is not reversible by pressing bold again; only the record still
+  knows the mix.
+
+Offsets are **character** offsets, the units `GtkTextIter` counts in. Anything
+using `strlen()` for a record's length works until the first accented character
+and then puts text back in the wrong place.
+
+Runs coalesce so one press takes back a word: contiguous, no newline, and
+breaking where a word does — at the step from whitespace to a character, so a
+space joins the word before it. `undo_records_coalesce()` is the display-free
+seam, and `undo_store_break_run()` is what the cursor moving calls, because two
+stretches of typing with a click between them are two things done however close
+the offsets fall.
+
+**The fingerprint** is the subtle part. A history outlives its buffer, and save
+is a lossy round trip through `markup.hpp`, so the text coming back off disk is
+not always the text the offsets describe. A history records a digest of the
+buffer as it was left and is **dropped rather than replayed** when it does not
+match on return — `session_for()`'s contract again. In the ordinary case, markup
+already at its fixed point, it matches and the history survives.
+
+`editor->applying` is the guard that keeps an undo from being recorded as a
+fresh edit, in the same idiom as `loading`. Applying a style also sets the
+modified flag by hand, since GTK only calls a buffer modified when text moves.
+
+Metadata records go to `project_actions_apply_metadata_record()` rather than the
+editor: the bytes may be a folder's sidecar, and even for a document they are
+frontmatter the editor deliberately does not hold. Both directions go through
+the same `write_metadata()` a typed edit does, so the ordering against the
+editor's stale `prologue` is written down once. A record is keyed by the **item**,
+not the file it lands in.
+
+The Edit menu names what a press would take back ("Undo Typing", "Undo Bold",
+"Undo Synopsis") and greys out what has nothing behind it. `menu_bar_show_undo()`
+reports what is in force rather than deciding it, the way
+`format_bar_show_styles()` does; a `GMenuItem`'s label cannot be changed in
+place, so the item is replaced.
+
+**File operations are not on the stack yet** — create, move, drag-reorder,
+group, and the delete and rename that do not exist as commands. Adding one is a
+new `UndoKind` and an arm in `undo_record_apply()`, not a redesign. What holds
+them back is the question text edits do not raise: what undo should do when the
+file has changed on disk since the record was made.
+
 ### UI wiring
 
 `WordsmithUiState` is shared per-window state; panels borrow it and never own it.

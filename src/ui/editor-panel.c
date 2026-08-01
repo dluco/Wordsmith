@@ -59,12 +59,35 @@ struct EditorPanel {
     gboolean inserting;
     int      insert_from;      /* offset the text landed at */
     uint32_t insert_styles;    /* what it should come out wearing */
+
+    /* Undo. The store is borrowed and outlives the open document, keyed by its
+     * path; see undo-stack.h for why a history is per item rather than per
+     * window. `applying` is the guard that keeps an undo from being recorded as
+     * a fresh edit, in the same idiom as `loading` above. `pending_delete` is
+     * a deletion captured before the text went, waiting for it to be gone. */
+    UndoStore*  undo;
+    UndoRecord* pending_delete;
+    gboolean    applying;
+
+    EditorHistoryFn history_callback;
+    void*           history_user_data;
 };
 
 /* Defined with the rest of the styling, but needed by everything that leaves
  * the cursor somewhere new. */
 static void notify_styles(EditorPanel* editor);
 static void forget_asked_styles(EditorPanel* editor);
+
+/* Record what the open document's buffer looks like as it is put away, so that
+ * a history coming back can be checked against the text it claims to describe.
+ * Everything that takes a document off the screen calls this. */
+static void note_leaving(EditorPanel* editor)
+{
+    if (editor->undo != NULL && editor->path != NULL) {
+        undo_store_note_fingerprint(editor->undo, editor->path,
+                                    undo_fingerprint(editor->buffer));
+    }
+}
 
 /* ── tags ────────────────────────────────────────────────────────────────── */
 
@@ -274,6 +297,11 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     editor->prologue = g_strndup(text, body);
     wordsmith_free_string(text);
 
+    /* Last look at the outgoing document, while its text is still here to be
+     * described. Nothing has been swapped in before this point, so a document
+     * that failed to parse has not disturbed the one it did not replace. */
+    note_leaving(editor);
+
     editor->loading = TRUE;
     gtk_text_buffer_set_text(editor->buffer, "", 0);
 
@@ -299,6 +327,15 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     editor->loading = FALSE;
 
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), TRUE);
+
+    /* And the first look at the incoming one. A history whose offsets no longer
+     * describe what came back off disk is dropped here rather than replayed
+     * into the wrong places; see undo-stack.h. */
+    if (editor->undo != NULL) {
+        undo_store_check_fingerprint(editor->undo, editor->path,
+                                     undo_fingerprint(editor->buffer));
+    }
+
     forget_asked_styles(editor);
     notify_styles(editor);
     return 1;
@@ -656,6 +693,68 @@ static void notify_styles(EditorPanel* editor)
                             editor->styles_user_data);
 }
 
+/* ── recording edits ─────────────────────────────────────────────────────── */
+
+static void notify_history(EditorPanel* editor)
+{
+    if (editor->history_callback != NULL) {
+        editor->history_callback(editor->history_user_data);
+    }
+}
+
+/* Whether what is happening to the buffer is the author's doing. Loading and
+ * applying an undo both move text about, and neither is an edit to remember. */
+static gboolean recording(EditorPanel* editor)
+{
+    return editor->undo != NULL && editor->path != NULL && !editor->loading
+        && !editor->applying;
+}
+
+/* Takes ownership, including when there is nowhere to put it. */
+static void record_edit(EditorPanel* editor, UndoRecord* record)
+{
+    if (record == NULL) {
+        return;
+    }
+    if (!recording(editor)) {
+        undo_record_free(record);
+        return;
+    }
+
+    undo_store_push(editor->undo, editor->path, record);
+    notify_history(editor);
+}
+
+/* A deletion has to be read before it happens — afterwards the text and the
+ * tags over it are both gone — so both ends of "delete-range" are connected,
+ * the same shape as the insertion pair below. */
+static void on_range_deleting(GtkTextBuffer* buffer, GtkTextIter* start,
+                              GtkTextIter* end, gpointer user_data)
+{
+    EditorPanel* editor = user_data;
+
+    g_clear_pointer(&editor->pending_delete, undo_record_free);
+    if (!recording(editor)) {
+        return;
+    }
+    editor->pending_delete = undo_record_capture_text(
+        buffer, editor->inline_tags, INLINE_TAG_COUNT, UNDO_TEXT_DELETE,
+        gtk_text_iter_get_offset(start), gtk_text_iter_get_offset(end));
+}
+
+static void on_range_deleted(GtkTextBuffer* buffer, GtkTextIter* start,
+                             GtkTextIter* end, gpointer user_data)
+{
+    (void) buffer;
+    (void) start;
+    (void) end;
+
+    EditorPanel* editor    = user_data;
+    UndoRecord*  captured  = editor->pending_delete;
+    editor->pending_delete = NULL;
+    record_edit(editor, captured);
+}
+
 /* Typing, moving and selecting all move the insertion point, so one signal
  * covers every way the answer changes from the author's side. What this panel
  * does to the tags itself does not move the cursor, and says so directly.
@@ -673,6 +772,13 @@ static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_dat
     EditorPanel* editor = user_data;
     if (editor->inserting) {
         return;
+    }
+
+    /* And the run of typing ends here too, for the same reason the asked-for
+     * style does: two stretches of typing with a click between them are two
+     * things done, however close together the offsets happen to fall. */
+    if (!editor->applying && editor->undo != NULL && editor->path != NULL) {
+        undo_store_break_run(editor->undo, editor->path);
     }
 
     forget_asked_styles(editor);
@@ -770,6 +876,15 @@ static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
         }
     }
 
+    /* After the styling, not before: the record carries what the text ended up
+     * wearing, so redoing an insertion puts back bold text as bold. */
+    if (to > from) {
+        record_edit(editor,
+                    undo_record_capture_text(buffer, editor->inline_tags,
+                                             INLINE_TAG_COUNT, UNDO_TEXT_INSERT,
+                                             from, to));
+    }
+
     notify_styles(editor);
 }
 
@@ -787,11 +902,24 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
 
         /* Toggle off only when the whole selection already carries the tag;
          * otherwise a mixed selection becomes uniformly styled. */
-        if (tag_covers(&start, &end, tag)) {
+        const gboolean covered = tag_covers(&start, &end, tag);
+
+        /* Captured before the press lands, because the press is what destroys
+         * the answer: making a mixed selection uniform is not reversible by
+         * pressing again, and only this record will still know the mix. */
+        UndoRecord* captured =
+            recording(editor)
+                ? undo_record_capture_style(editor->buffer, tag, index,
+                                            gtk_text_iter_get_offset(&start),
+                                            gtk_text_iter_get_offset(&end), !covered)
+                : NULL;
+
+        if (covered) {
             gtk_text_buffer_remove_tag(editor->buffer, tag, &start, &end);
         } else {
             gtk_text_buffer_apply_tag(editor->buffer, tag, &start, &end);
         }
+        record_edit(editor, captured);
         /* The selection has its answer written into it; nothing is left over
          * for the next thing typed. */
         forget_asked_styles(editor);
@@ -808,18 +936,28 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
 
 /* ── editing verbs ───────────────────────────────────────────────────────── */
 
-void editor_panel_undo(EditorPanel* editor)
+void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
+                               gboolean reverse)
 {
-    if (gtk_text_buffer_get_can_undo(editor->buffer)) {
-        gtk_text_buffer_undo(editor->buffer);
+    if (editor == NULL || record == NULL || editor->path == NULL) {
+        return;
     }
-}
 
-void editor_panel_redo(EditorPanel* editor)
-{
-    if (gtk_text_buffer_get_can_redo(editor->buffer)) {
-        gtk_text_buffer_redo(editor->buffer);
+    editor->applying = TRUE;
+    undo_record_apply(record, editor->buffer, editor->inline_tags, INLINE_TAG_COUNT,
+                      reverse);
+    editor->applying = FALSE;
+
+    /* Applying a style leaves the tags changed without touching a character,
+     * and GtkTextBuffer only calls itself modified when text moves. Saying so
+     * here is what keeps an undone format from being left out of the next
+     * save. */
+    if (record->kind == UNDO_STYLE) {
+        gtk_text_buffer_set_modified(editor->buffer, TRUE);
     }
+
+    forget_asked_styles(editor);
+    notify_styles(editor);
 }
 
 void editor_panel_cut(EditorPanel* editor)
@@ -919,6 +1057,11 @@ EditorPanel* editor_panel_new(void)
     /* Nothing is open yet, so there is nowhere for typing to go. */
     gtk_widget_set_sensitive(view, FALSE);
 
+    /* Wordsmith keeps its own history. GtkTextBuffer's records text and not
+     * tags, and dies at every set_text(), so leaving it on would only give the
+     * buffer a second, shorter opinion about what Ctrl+Z means. */
+    gtk_text_buffer_set_enable_undo(editor->buffer, FALSE);
+
     build_tags(editor);
 
     g_signal_connect(editor->buffer, "modified-changed",
@@ -931,6 +1074,11 @@ EditorPanel* editor_panel_new(void)
                      G_CALLBACK(on_text_inserting), editor);
     g_signal_connect_after(editor->buffer, "insert-text",
                            G_CALLBACK(on_text_inserted), editor);
+    /* And both ends of a deletion, to read the text before it goes. */
+    g_signal_connect(editor->buffer, "delete-range",
+                     G_CALLBACK(on_range_deleting), editor);
+    g_signal_connect_after(editor->buffer, "delete-range",
+                           G_CALLBACK(on_range_deleted), editor);
 
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "editor-pane");
@@ -951,6 +1099,7 @@ void editor_panel_free(EditorPanel* editor)
     if (editor == NULL) {
         return;
     }
+    undo_record_free(editor->pending_delete);
     g_free(editor->path);
     g_free(editor->prologue);
     g_free(editor);
@@ -976,8 +1125,22 @@ void editor_panel_set_styles_callback(EditorPanel* editor, EditorStylesFn callba
     editor->styles_user_data = user_data;
 }
 
+void editor_panel_set_undo_store(EditorPanel* editor, UndoStore* store)
+{
+    editor->undo = store;
+}
+
+void editor_panel_set_history_callback(EditorPanel* editor,
+                                       EditorHistoryFn callback, void* user_data)
+{
+    editor->history_callback  = callback;
+    editor->history_user_data = user_data;
+}
+
 void editor_panel_close(EditorPanel* editor)
 {
+    note_leaving(editor);
+
     editor->loading = TRUE;
     gtk_text_buffer_set_text(editor->buffer, "", 0);
     gtk_text_buffer_set_modified(editor->buffer, FALSE);

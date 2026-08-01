@@ -640,6 +640,24 @@ void binder_panel_set_project(BinderPanel* binder, WordsmithProject* project)
 
 /* ── selection helpers ───────────────────────────────────────────────────── */
 
+char* binder_panel_selected_path(BinderPanel* binder)
+{
+    if (binder == NULL || binder->project == NULL) {
+        return NULL;
+    }
+
+    GtkTreeListRow* row = gtk_single_selection_get_selected_item(binder->selection);
+    if (row == NULL) {
+        return NULL;
+    }
+
+    BinderItem* item = gtk_tree_list_row_get_item(row);
+    char* path = g_strdup(item->path);
+    g_object_unref(item);
+
+    return path;
+}
+
 char* binder_panel_target_folder(BinderPanel* binder)
 {
     if (binder->project == NULL) {

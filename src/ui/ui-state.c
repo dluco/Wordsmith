@@ -5,6 +5,7 @@
 #include "format-bar.h"
 #include "inspector-panel.h"
 #include "menu-bar.h"
+#include "project-actions.h"
 
 #include "core/markup-c.h"
 #include "core/session-c.h"
@@ -17,7 +18,9 @@
 
 WordsmithUiState* ui_state_new(void)
 {
-    return g_new0(WordsmithUiState, 1);
+    WordsmithUiState* state = g_new0(WordsmithUiState, 1);
+    state->undo = undo_store_new();
+    return state;
 }
 
 void ui_state_free(WordsmithUiState* state)
@@ -34,6 +37,9 @@ void ui_state_free(WordsmithUiState* state)
     format_bar_free(state->format_bar);
     editor_panel_free(state->editor);
     inspector_panel_free(state->inspector);
+
+    /* After the editor, which holds a borrowed pointer to it. */
+    undo_store_free(state->undo);
 
     wordsmith_project_free(state->project);
 
@@ -278,12 +284,18 @@ void ui_state_set_project(WordsmithUiState* state, WordsmithProject* project)
     editor_panel_close(state->editor);
     inspector_panel_clear(state->inspector);
 
+    /* After the editor has been put away, so nothing is left holding a history
+     * that has just gone. Undo ends with the project: it is not written down,
+     * and a history is only meaningful against the files it was made over. */
+    undo_store_clear(state->undo);
+
     wordsmith_project_free(state->project);
     state->project = project;
 
     binder_panel_set_project(state->binder, project);
     restore_session(state);
     ui_state_update_title(state);
+    ui_state_undo_changed(state);
 }
 
 void ui_state_reload_project(WordsmithUiState* state)
@@ -293,6 +305,88 @@ void ui_state_reload_project(WordsmithUiState* state)
     }
     wordsmith_project_reload(state->project);
     binder_panel_reload(state->binder);
+}
+
+/* ── undo ────────────────────────────────────────────────────────────────── */
+
+/* Which item's history a press addresses: the one the author is looking at.
+ *
+ * The binder's selection rather than the open document, because a folder has a
+ * history too — it has no body to edit, but it has metadata — and because the
+ * selection is what both side panes already follow. The open document is the
+ * fallback for the one case where there is no selection to read, a document
+ * opened from the command line before any row has been clicked. Caller frees. */
+static char* undo_target(WordsmithUiState* state)
+{
+    if (state == NULL || state->project == NULL) {
+        return NULL;
+    }
+
+    char* selected = binder_panel_selected_path(state->binder);
+    if (selected != NULL) {
+        return selected;
+    }
+    return g_strdup(editor_panel_path(state->editor));
+}
+
+static void step(WordsmithUiState* state, gboolean reverse)
+{
+    char* path = undo_target(state);
+    if (path == NULL) {
+        return;
+    }
+
+    const UndoRecord* record = reverse ? undo_store_peek_undo(state->undo, path)
+                                       : undo_store_peek_redo(state->undo, path);
+    if (record == NULL) {
+        g_free(path);
+        return;
+    }
+
+    if (record->kind == UNDO_METADATA) {
+        project_actions_apply_metadata_record(state, record, reverse);
+    } else {
+        editor_panel_apply_record(state->editor, record, reverse);
+    }
+
+    /* After applying, so a record that could not be put back leaves the history
+     * where it was rather than stepping over it. */
+    if (reverse) {
+        undo_store_step_undo(state->undo, path);
+    } else {
+        undo_store_step_redo(state->undo, path);
+    }
+
+    ui_state_undo_changed(state);
+    ui_state_update_title(state);
+    g_free(path);
+}
+
+void ui_state_undo(WordsmithUiState* state)
+{
+    step(state, TRUE);
+}
+
+void ui_state_redo(WordsmithUiState* state)
+{
+    step(state, FALSE);
+}
+
+void ui_state_undo_changed(WordsmithUiState* state)
+{
+    if (state == NULL) {
+        return;
+    }
+
+    char* path = undo_target(state);
+    char* undo_verb = undo_record_verb(undo_store_peek_undo(state->undo, path));
+    char* redo_verb = undo_record_verb(undo_store_peek_redo(state->undo, path));
+
+    menu_bar_show_undo(state->menu_bar, undo_verb, redo_verb);
+
+    g_free(undo_verb);
+    g_free(redo_verb);
+    g_free(path);
 }
 
 void ui_state_update_title(WordsmithUiState* state)

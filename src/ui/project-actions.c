@@ -276,12 +276,75 @@ static char* apply_edit(const InspectorEdit* edit, const char* text)
                : wordsmith_frontmatter_set_field(text, edit->key, edit->value);
 }
 
-void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* edit)
+/* What `key` holds in the file behind `path` right now, so that setting it can
+ * be taken back. Absent — no file, no frontmatter, no such key — comes back as
+ * both fields NULL, which is a value in its own right: an author who empties a
+ * field removes it, and undo has to be able to put the difference back. */
+typedef struct MetadataValue {
+    char*  scalar;
+    char** items;   /* NULL-terminated */
+} MetadataValue;
+
+static void metadata_value_clear(MetadataValue* value)
 {
-    if (edit == NULL || edit->path == NULL || edit->key == NULL) {
+    g_clear_pointer(&value->scalar, g_free);
+    g_clear_pointer(&value->items, g_strfreev);
+}
+
+static void read_metadata_value(const InspectorEdit* edit, MetadataValue* out)
+{
+    out->scalar = NULL;
+    out->items  = NULL;
+
+    char* target = metadata_file_for(edit);
+    if (target == NULL) {
         return;
     }
 
+    char* error = NULL;
+    char* text  = wordsmith_document_read(target, &error);
+    wordsmith_free_string(error);
+    g_free(target);
+    if (text == NULL) {
+        return;
+    }
+
+    /* A folder's sidecar is bare YAML; a document's frontmatter is fenced. The
+     * same difference the write side turns on. */
+    WordsmithFrontmatter* frontmatter =
+        edit->is_folder ? wordsmith_frontmatter_parse_yaml(text)
+                        : wordsmith_frontmatter_parse(text);
+    if (frontmatter != NULL) {
+        switch (wordsmith_frontmatter_value_kind(frontmatter, edit->key)) {
+        case WORDSMITH_FRONTMATTER_SCALAR:
+            out->scalar =
+                g_strdup(wordsmith_frontmatter_string(frontmatter, edit->key));
+            break;
+        case WORDSMITH_FRONTMATTER_SEQUENCE: {
+            const size_t count =
+                wordsmith_frontmatter_sequence_count(frontmatter, edit->key);
+            out->items = g_new0(char*, count + 1);
+            for (size_t index = 0; index < count; index++) {
+                out->items[index] = g_strdup(
+                    wordsmith_frontmatter_sequence_at(frontmatter, edit->key, index));
+            }
+            break;
+        }
+        default:
+            /* Missing, or a map the inspector has no way to have typed. */
+            break;
+        }
+        wordsmith_frontmatter_free(frontmatter);
+    }
+
+    wordsmith_free_string(text);
+}
+
+/* The write itself, with nothing recorded. Both a typed edit and an undo of one
+ * come through here, so the ordering against the editor's stale prologue is
+ * written down once. */
+static gboolean write_metadata(WordsmithUiState* state, const InspectorEdit* edit)
+{
     /* Commit the buffer before rewriting the file under it: the editor puts the
      * frontmatter back as it found it, so saving afterwards would undo this. */
     const gboolean open_here =
@@ -293,7 +356,7 @@ void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* 
 
     char* target = metadata_file_for(edit);
     if (target == NULL) {
-        return;
+        return FALSE;
     }
 
     char* error = NULL;
@@ -301,7 +364,7 @@ void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* 
     if (text == NULL && !edit->is_folder) {
         ui_state_report_error(state, "Could not read the document", error);
         g_free(target);
-        return;
+        return FALSE;
     }
     /* A folder with no sidecar yet is not a failure: writing the first field is
      * what creates it. */
@@ -314,7 +377,7 @@ void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* 
     if (updated == NULL) {
         ui_state_report_error(state, "Could not update the metadata", NULL);
         g_free(target);
-        return;
+        return FALSE;
     }
 
     const int ok = wordsmith_document_write(target, updated, &error);
@@ -329,6 +392,70 @@ void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* 
 
     /* Either way, show what is on disk rather than what was typed. */
     inspector_panel_reload(state->inspector);
+    return ok != 0;
+}
+
+void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* edit)
+{
+    if (edit == NULL || edit->path == NULL || edit->key == NULL) {
+        return;
+    }
+
+    /* Read before writing: afterwards the old value is only in this record.
+     * Reading costs one read of a file that is about to be read again anyway. */
+    MetadataValue before = { NULL, NULL };
+    read_metadata_value(edit, &before);
+
+    if (!write_metadata(state, edit)) {
+        metadata_value_clear(&before);
+        return;
+    }
+
+    /* InspectorEdit carries a count; a record carries a NULL-terminated vector,
+     * so that a value read back out of one looks the same however it arrived. */
+    char** after_items = NULL;
+    if (edit->items != NULL) {
+        after_items = g_new0(char*, edit->item_count + 1);
+        for (size_t index = 0; index < edit->item_count; index++) {
+            after_items[index] = g_strdup(edit->items[index]);
+        }
+    }
+
+    /* Keyed by the item rather than the file it lands in, so a folder's fields
+     * and a document's sit in the history of the row the author selected. */
+    UndoRecord* record = undo_record_new_metadata(
+        edit->path, edit->is_folder, edit->key, before.scalar,
+        (const char* const*) before.items, edit->value,
+        (const char* const*) after_items);
+    if (record != NULL) {
+        undo_store_push(state->undo, edit->path, record);
+        ui_state_undo_changed(state);
+    }
+
+    g_strfreev(after_items);
+    metadata_value_clear(&before);
+}
+
+void project_actions_apply_metadata_record(WordsmithUiState* state,
+                                           const UndoRecord* record,
+                                           gboolean reverse)
+{
+    if (state == NULL || record == NULL || record->kind != UNDO_METADATA) {
+        return;
+    }
+
+    const UndoValue* value =
+        reverse ? &record->metadata.before : &record->metadata.after;
+
+    const InspectorEdit edit = {
+        .path       = record->metadata.target,
+        .is_folder  = record->metadata.is_folder,
+        .key        = record->metadata.key,
+        .value      = value->scalar,
+        .items      = (const char* const*) value->items,
+        .item_count = value->items != NULL ? g_strv_length(value->items) : 0,
+    };
+    write_metadata(state, &edit);
 }
 
 /* ── creating binder items ───────────────────────────────────────────────── */

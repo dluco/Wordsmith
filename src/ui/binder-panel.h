@@ -77,6 +77,13 @@ void binder_panel_set_project(BinderPanel* binder, WordsmithProject* project);
  *  the project. */
 void binder_panel_reload(BinderPanel* binder);
 
+/** The selected item, folder or document, or NULL when nothing is selected or
+ *  no project is open. Caller frees with g_free().
+ *
+ *  This is what an undo addresses: a history belongs to the item the author is
+ *  looking at, and the binder is the one place that knows which that is. */
+char* binder_panel_selected_path(BinderPanel* binder);
+
 /** Where a newly created folder or document should go: the selected folder,
  *  the selected document's parent, or the manuscript root when nothing is
  *  selected. NULL when no project is open. Caller frees with g_free(). */

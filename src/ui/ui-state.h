@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/project-c.h"
+#include "undo-stack.h"
 
 #include <gtk/gtk.h>
 
@@ -23,6 +24,11 @@ typedef struct WordsmithUiState {
     FormatBar*      format_bar;
     EditorPanel*    editor;
     InspectorPanel* inspector;
+
+    /* Every item's undo history, for as long as the project is open. Owned;
+     * cleared when the project changes, which is the whole of what makes undo
+     * session-scoped. See undo-stack.h. */
+    UndoStore* undo;
 
     /* The pending session write, and the guard that keeps putting a saved view
      * back from counting as a change to it. */
@@ -93,6 +99,23 @@ void ui_state_remember_session(WordsmithUiState* state);
 /** Write the view out now, ahead of something that is about to take the project
  *  away. Harmless with no project open. */
 void ui_state_flush_session(WordsmithUiState* state);
+
+/* Undo and redo.
+ *
+ * A press addresses the history of the item the author is looking at — the
+ * binder's selection — so it can never take back something in a document they
+ * had stopped thinking about. Text and formatting go to the editor; a metadata
+ * record goes to project-actions.c, which knows the ordering a write needs
+ * against the editor's own copy of the frontmatter. */
+
+void ui_state_undo(WordsmithUiState* state);
+void ui_state_redo(WordsmithUiState* state);
+
+/** Bring the Edit menu into line with what a press would now take back. Called
+ *  after anything that changes a history, including selecting a different item:
+ *  the menu reports what is in force rather than deciding it, the same way the
+ *  format bar does. */
+void ui_state_undo_changed(WordsmithUiState* state);
 
 /** Show `message` and, when non-NULL, `detail`. Takes ownership of `detail`,
  *  freeing it with wordsmith_free_string(), so it pairs with the core's

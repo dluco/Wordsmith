@@ -26,9 +26,12 @@ static void on_binder_selected(const char* path, int is_folder, void* user_data)
     }
     if (is_folder) {
         inspector_panel_set_folder(state->inspector, path);
-        return;
+    } else {
+        project_actions_open_document(state, path);
     }
-    project_actions_open_document(state, path);
+    /* A press addresses the selected item's history, so what Ctrl+Z would take
+     * back has just changed even though nothing was edited. */
+    ui_state_undo_changed(state);
 }
 
 /* A drag in the binder either puts an item inside a folder or sets it down next
@@ -66,6 +69,13 @@ static void on_editor_styles(uint32_t flags, void* user_data)
 {
     WordsmithUiState* state = user_data;
     format_bar_show_styles(state->format_bar, flags);
+}
+
+/* The editor records its own edits; what it reports is that it has, which is
+ * all the Edit menu needs to name what a press would take back. */
+static void on_editor_history(void* user_data)
+{
+    ui_state_undo_changed(user_data);
 }
 
 /* A folder twisted open or shut is worth remembering, and nothing else. The
@@ -147,6 +157,8 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     binder_panel_set_expand_callback(state->binder, on_binder_expanded, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
     editor_panel_set_styles_callback(state->editor, on_editor_styles, state);
+    editor_panel_set_undo_store(state->editor, state->undo);
+    editor_panel_set_history_callback(state->editor, on_editor_history, state);
     inspector_panel_set_commit_callback(state->inspector, on_inspector_commit, state);
 
     /* The format bar sits above the manuscript and shares its column, so it

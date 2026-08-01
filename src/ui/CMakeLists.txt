@@ -69,6 +69,7 @@ target_sources(wordsmith-ui PRIVATE
     format-bar.c
     inspector-panel.c
     text-scale.c
+    undo-stack.c
 )
 
 target_link_libraries(wordsmith-ui PRIVATE

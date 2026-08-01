@@ -46,6 +46,16 @@ void project_actions_open_document(WordsmithUiState* state, const char* path);
 void project_actions_set_metadata(WordsmithUiState* state,
                                   const InspectorEdit* edit);
 
+/** Put one recorded metadata edit back, or forward again. Undo lands here
+ *  rather than in the editor because the file behind a field is not the buffer:
+ *  it may be a folder's sidecar, and even for a document it is the frontmatter
+ *  the editor deliberately does not hold. The write goes through the same path
+ *  a typed edit does, so the ordering against the editor's stale prologue is
+ *  handled once. */
+void project_actions_apply_metadata_record(WordsmithUiState* state,
+                                           const UndoRecord* record,
+                                           gboolean reverse);
+
 /* The two halves of a binder drag. Both save first, since a move takes the
  * open document's path out from under the editor, and both leave the moved
  * item selected. */

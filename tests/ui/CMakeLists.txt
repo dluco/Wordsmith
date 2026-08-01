@@ -54,3 +54,20 @@ target_link_libraries(wordsmith-format-bar-tests PRIVATE
 target_include_directories(wordsmith-format-bar-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME wordsmith-format-bar-tests COMMAND wordsmith-format-bar-tests)
+
+# Headless for the same reason as the format bar: the undo history is records
+# and offsets over a GtkTextBuffer, and none of it needs a widget. The editor
+# panel's signal wiring does, which is why the seam between the two is
+# undo_record_capture_text() and undo_record_apply().
+add_executable(wordsmith-undo-tests
+    test-undo.c
+)
+
+target_link_libraries(wordsmith-undo-tests PRIVATE
+    wordsmith-ui
+    gtk4_lib
+)
+
+target_include_directories(wordsmith-undo-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME wordsmith-undo-tests COMMAND wordsmith-undo-tests)

@@ -9,7 +9,13 @@
 #include "core/wordsmith-core-c.h"
 
 struct MenuBar {
-    GtkApplication* app; /* borrowed */
+    GtkApplication* app;    /* borrowed */
+    GtkWindow*      window; /* borrowed; where the actions live */
+
+    /* Held so Undo and Redo can be renamed as the history changes. A GMenu item
+     * has no settable label — the item is replaced in place instead — so the
+     * section it sits in is what has to be kept. */
+    GMenu* undo_section;
 };
 
 /* ── action handlers ─────────────────────────────────────────────────────── */
@@ -89,18 +95,21 @@ static void on_new_folder_with_selection(GSimpleAction* action, GVariant* param,
                                               g_variant_get_string(param, NULL));
 }
 
+/* Undo addresses the selected item's history, which may hold a metadata edit as
+ * readily as a stretch of typing, so the choice of what to put back is
+ * ui-state's rather than any one panel's. */
 static void on_undo(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_undo(((WordsmithUiState*) user)->editor);
+    ui_state_undo(user);
 }
 
 static void on_redo(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
     (void) param;
-    editor_panel_redo(((WordsmithUiState*) user)->editor);
+    ui_state_redo(user);
 }
 
 static void on_cut(GSimpleAction* action, GVariant* param, gpointer user)
@@ -397,7 +406,7 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
 
 /* ── menu model ──────────────────────────────────────────────────────────── */
 
-static GMenuModel* build_menu_model(void)
+static GMenuModel* build_menu_model(GMenu** undo_section_out)
 {
     GMenu* menubar = g_menu_new();
 
@@ -429,7 +438,9 @@ static GMenuModel* build_menu_model(void)
     g_menu_append(undo_section, "Undo", "win.undo");
     g_menu_append(undo_section, "Redo", "win.redo");
     g_menu_append_section(edit_menu, NULL, G_MENU_MODEL(undo_section));
-    g_object_unref(undo_section);
+    /* Handed back rather than dropped: these two items are renamed as the
+     * history changes. */
+    *undo_section_out = undo_section;
 
     GMenu* clipboard_section = g_menu_new();
     g_menu_append(clipboard_section, "Cut", "win.cut");
@@ -515,16 +526,72 @@ static GMenuModel* build_menu_model(void)
     return G_MENU_MODEL(menubar);
 }
 
+/* ── what a press would take back ────────────────────────────────────────── */
+
+/* A GMenuItem's label cannot be changed once it is in a model, so the item is
+ * replaced by one that says the new thing. */
+static void rename_item(GMenu* section, int position, const char* label,
+                        const char* action)
+{
+    g_menu_remove(section, position);
+
+    GMenuItem* item = g_menu_item_new(label, action);
+    g_menu_insert_item(section, position, item);
+    g_object_unref(item);
+}
+
+static void set_action_enabled(MenuBar* menu_bar, const char* name,
+                               gboolean enabled)
+{
+    if (menu_bar->window == NULL) {
+        return;
+    }
+
+    GAction* action =
+        g_action_map_lookup_action(G_ACTION_MAP(menu_bar->window), name);
+    if (action != NULL) {
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(action), enabled);
+    }
+}
+
+void menu_bar_show_undo(MenuBar* menu_bar, const char* undo_verb,
+                        const char* redo_verb)
+{
+    if (menu_bar == NULL || menu_bar->undo_section == NULL) {
+        return;
+    }
+
+    char* undo_label = undo_verb != NULL ? g_strdup_printf("Undo %s", undo_verb)
+                                         : g_strdup("Undo");
+    char* redo_label = redo_verb != NULL ? g_strdup_printf("Redo %s", redo_verb)
+                                         : g_strdup("Redo");
+
+    rename_item(menu_bar->undo_section, 0, undo_label, "win.undo");
+    rename_item(menu_bar->undo_section, 1, redo_label, "win.redo");
+
+    g_free(undo_label);
+    g_free(redo_label);
+
+    /* Greyed out rather than merely inert, so a press that would do nothing
+     * looks like nothing rather than like a broken key. */
+    set_action_enabled(menu_bar, "undo", undo_verb != NULL);
+    set_action_enabled(menu_bar, "redo", redo_verb != NULL);
+}
+
 MenuBar* menu_bar_new(WordsmithUiState* state, GtkApplication* app)
 {
     MenuBar* menu_bar = g_new0(MenuBar, 1);
-    menu_bar->app = app;
+    menu_bar->app    = app;
+    menu_bar->window = state->window;
 
     install_actions(state, app);
 
-    GMenuModel* model = build_menu_model();
+    GMenuModel* model = build_menu_model(&menu_bar->undo_section);
     gtk_application_set_menubar(app, model);
     g_object_unref(model);
+
+    /* Nothing has been done yet, so there is nothing to take back. */
+    menu_bar_show_undo(menu_bar, NULL, NULL);
 
     return menu_bar;
 }
@@ -534,5 +601,6 @@ void menu_bar_free(MenuBar* menu_bar)
     if (menu_bar == NULL) {
         return;
     }
+    g_clear_object(&menu_bar->undo_section);
     g_free(menu_bar);
 }
