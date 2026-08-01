@@ -440,6 +440,26 @@ void remember_child(const fs::path& folder, const std::string& name)
     write_child_order(folder, order, ignored);
 }
 
+/* In place, rather than forgetting the old name and remembering the new one:
+ * that pair would take the item out of the middle of the list and put it back at
+ * the end, which is a move. Renaming something leaves it where it stands. */
+void rename_child(const fs::path& folder, const std::string& old_name,
+                  const std::string& new_name)
+{
+    if (!records_order(folder)) {
+        return;
+    }
+    std::vector<std::string> order = read_child_order(folder);
+    const auto at = std::find(order.begin(), order.end(), old_name);
+    if (at == order.end()) {
+        return;
+    }
+    *at = new_name;
+
+    std::string ignored;
+    write_child_order(folder, order, ignored);
+}
+
 } // namespace
 
 bool Project::set_child_order(const fs::path& folder,
@@ -595,6 +615,54 @@ bool Project::move_entry_beside(const fs::path& source, const fs::path& anchor,
     }
 
     return write_child_order(parent, order, error);
+}
+
+bool Project::rename_entry(const fs::path& item, std::string_view new_name,
+                           fs::path& renamed_path, std::string& error) const
+{
+    if (!contains(item)) {
+        error = "the item being renamed is outside the manuscript";
+        return false;
+    }
+    if (paths_equal(item, manuscript_path())) {
+        error = "the manuscript folder cannot be renamed";
+        return false;
+    }
+
+    std::error_code code;
+    if (!fs::exists(item, code)) {
+        error = item.filename().string() + " is no longer there";
+        return false;
+    }
+
+    /* A folder is named outright; a document keeps the extension that makes it a
+     * document, whatever the author typed. Taking the extension from the file
+     * rather than assuming DOCUMENT_EXTENSION keeps a `.MD` on disk as it is. */
+    const bool is_folder = fs::is_directory(item, code);
+    const std::string base = sanitize_name(new_name);
+    const fs::path target =
+        item.parent_path() / (is_folder ? base : base + item.extension().string());
+
+    if (paths_equal(target, item)) {
+        renamed_path = item;   // the name it already has; nothing to do
+        return true;
+    }
+    if (fs::exists(target, code)) {
+        error = target.filename().string() + " already exists";
+        return false;
+    }
+
+    fs::rename(item, target, code);
+    if (code) {
+        error = "cannot rename " + item.filename().string() + ": " + code.message();
+        return false;
+    }
+
+    rename_child(item.parent_path(), item.filename().string(),
+                 target.filename().string());
+
+    renamed_path = target;
+    return true;
 }
 
 bool Project::create_document(const fs::path& parent, std::string_view name,

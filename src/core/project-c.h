@@ -98,6 +98,13 @@ int wordsmith_project_group_into_new_folder(WordsmithProject* project,
                                              const char* name, char** folder_path,
                                              char** moved_path, char** error);
 
+/** Rename the item at `item_path` to `new_name`, a user-typed title that gets
+ *  sanitised into a filename. The item keeps its place in its folder's recorded
+ *  order. On success `renamed_path`, if non-NULL, receives the new location. */
+int wordsmith_project_rename(WordsmithProject* project, const char* item_path,
+                              const char* new_name, char** renamed_path,
+                              char** error);
+
 /* ── folder metadata ────────────────────────────────────────────────────── */
 
 /** Where `folder_path` keeps its sidecar of fields and child order. The file

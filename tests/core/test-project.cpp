@@ -419,6 +419,109 @@ void test_move_maintains_child_order()
           "move order: an unarranged folder stays free of a sidecar");
 }
 
+void test_rename_entry()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "rename: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path chapter;
+    project->create_document(manuscript, "chapter", chapter, error);
+    wordsmith::write_document(chapter, "The words.\n", error);
+
+    fs::path renamed;
+    check(project->rename_entry(chapter, "The Arrival", renamed, error),
+          "rename: a document is renamed (" + error + ")");
+    check_equal(renamed.filename().string(), "The-Arrival.md",
+                "rename: the typed title is sanitised, and keeps its extension");
+    check(!fs::exists(chapter), "rename: the old name is gone");
+
+    std::string contents;
+    check(wordsmith::read_document(renamed, contents, error),
+          "rename: the renamed document is readable");
+    check_equal(contents, "The words.\n", "rename: the words come with it");
+
+    fs::path folder;
+    project->create_folder(manuscript, "part", folder, error);
+    fs::path renamed_folder;
+    check(project->rename_entry(folder, "Act One", renamed_folder, error),
+          "rename: a folder is renamed (" + error + ")");
+    check_equal(renamed_folder.filename().string(), "Act-One",
+                "rename: a folder gains no extension");
+
+    /* Renaming to the name it already has is a question with an answer, not an
+     * error: nothing to do, and it succeeded. */
+    fs::path unchanged;
+    check(project->rename_entry(renamed, "The-Arrival", unchanged, error),
+          "rename: the name it already has succeeds (" + error + ")");
+    check_equal(unchanged.string(), renamed.string(),
+                "rename: and reports the same path back");
+
+    fs::path taken;
+    project->create_document(manuscript, "occupied", taken, error);
+    fs::path collision;
+    check(!project->rename_entry(taken, "The Arrival", collision, error),
+          "rename: refuses a name already taken");
+
+    /* The manuscript folder is named by project.wordsmith, so renaming it here
+     * would leave the project pointing at a folder that is not there. */
+    fs::path moved_root;
+    check(!project->rename_entry(manuscript, "elsewhere", moved_root, error),
+          "rename: refuses the manuscript folder");
+    check(!project->rename_entry(temp.path() / "outside.md", "inside", moved_root,
+                                 error),
+          "rename: refuses a path outside the manuscript");
+}
+
+void test_rename_keeps_its_place_in_the_order()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "rename order: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path first;
+    fs::path middle;
+    fs::path last;
+    project->create_document(manuscript, "first", first, error);
+    project->create_document(manuscript, "middle", middle, error);
+    project->create_document(manuscript, "last", last, error);
+    project->set_child_order(manuscript, { "first.md", "middle.md", "last.md" },
+                             error);
+
+    fs::path renamed;
+    check(project->rename_entry(middle, "centre", renamed, error),
+          "rename order: the rename succeeds (" + error + ")");
+
+    const std::vector<std::string> order = wordsmith::read_child_order(manuscript);
+    check(order.size() == 3, "rename order: nothing is added or dropped");
+    if (order.size() == 3) {
+        check_equal(order[1], "centre.md",
+                    "rename order: the new name stands where the old one did");
+        check_equal(order[0], "first.md", "rename order: the siblings do not move");
+        check_equal(order[2], "last.md", "rename order: the siblings do not move");
+    }
+
+    /* A folder nobody has arranged has no order to keep, and renaming inside it
+     * must not scatter a sidecar into it. */
+    fs::path plain;
+    project->create_folder(manuscript, "plain", plain, error);
+    fs::path loose;
+    project->create_document(plain, "loose", loose, error);
+    project->rename_entry(loose, "found", renamed, error);
+    check(!fs::exists(plain / "metadata.yaml"),
+          "rename order: an unarranged folder stays free of a sidecar");
+}
+
 /* The names of a folder's children in the order the binder would show them. */
 std::string binder_order_of(const fs::path& folder)
 {
@@ -611,6 +714,8 @@ int main()
     test_move_beside_reorders();
     test_move_beside_across_folders();
     test_group_into_new_folder();
+    test_rename_entry();
+    test_rename_keeps_its_place_in_the_order();
     test_document_read_write();
     test_sanitize_name();
 

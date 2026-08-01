@@ -301,6 +301,28 @@ int wordsmith_project_group_into_new_folder(WordsmithProject* project,
     return 1;
 }
 
+int wordsmith_project_rename(WordsmithProject* project, const char* item_path,
+                              const char* new_name, char** renamed_path,
+                              char** error)
+{
+    if (project == nullptr || item_path == nullptr || new_name == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path renamed;
+    std::string message;
+    if (!project->project->rename_entry(fs::path(item_path), new_name, renamed,
+                                        message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (renamed_path != nullptr) {
+        *renamed_path = duplicate(renamed.string());
+    }
+    return 1;
+}
+
 /* ── folder metadata ────────────────────────────────────────────────────── */
 
 char* wordsmith_folder_metadata_path(const char* folder_path)

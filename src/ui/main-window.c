@@ -49,6 +49,15 @@ static void on_binder_moved(const char* source_path, const char* target_path,
                                 zone == BINDER_DROP_AFTER);
 }
 
+/* A name typed into a binder row. The panel handles the typing and hands over
+ * the answer; renaming the file, and putting the editor back on it afterwards,
+ * belongs with every other verb that moves a document. */
+static void on_binder_renamed(const char* path, const char* new_name,
+                              void* user_data)
+{
+    project_actions_rename_to(user_data, path, new_name);
+}
+
 /* The inspector types a field; where those bytes go, and what else has to know
  * about them, is the project's problem rather than the pane's. */
 static void on_inspector_commit(const InspectorEdit* edit, void* user_data)
@@ -155,6 +164,7 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     binder_panel_set_select_callback(state->binder, on_binder_selected, state);
     binder_panel_set_move_callback(state->binder, on_binder_moved, state);
     binder_panel_set_expand_callback(state->binder, on_binder_expanded, state);
+    binder_panel_set_rename_callback(state->binder, on_binder_renamed, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
     editor_panel_set_styles_callback(state->editor, on_editor_styles, state);
     editor_panel_set_undo_store(state->editor, state->undo);

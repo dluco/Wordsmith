@@ -1,5 +1,6 @@
 #include "menu-bar.h"
 
+#include "binder-panel.h"
 #include "editor-panel.h"
 #include "project-actions.h"
 #include "text-scale.h"
@@ -93,6 +94,27 @@ static void on_new_folder_with_selection(GSimpleAction* action, GVariant* param,
     (void) action;
     project_actions_new_folder_with_selection(user,
                                               g_variant_get_string(param, NULL));
+}
+
+static void on_rename_item(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    project_actions_rename(user, g_variant_get_string(param, NULL));
+}
+
+/* The untargeted form: the item the author is looking at, which is the binder's
+ * selection — the same thing Ctrl+Z addresses, and for the same reason. */
+static void on_rename(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+
+    WordsmithUiState* state = user;
+    char* selected = binder_panel_selected_path(state->binder);
+    if (selected != NULL) {
+        project_actions_rename(state, selected);
+    }
+    g_free(selected);
 }
 
 /* Undo addresses the selected item's history, which may hold a metadata edit as
@@ -282,6 +304,11 @@ static const ActionSpec ACTIONS[] = {
     { "paste",            G_CALLBACK(on_paste),            "<Control>v"        },
     { "find",             G_CALLBACK(on_stub_action),      "<Control>f"        },
     { "find-in-project",  G_CALLBACK(on_stub_action),      "<Control><Shift>f" },
+    /* F2 is the rename key everywhere a tree has names in it, and it is one of
+     * the few left that GtkTextView wants nothing to do with — an accelerator
+     * outranks the editor's own bindings, so a letter here would be a letter the
+     * author could no longer type. */
+    { "rename",           G_CALLBACK(on_rename),           "F2"                },
 
     /* Insert */
     { "new-text",         G_CALLBACK(on_new_text),         "<Control>t"        },
@@ -318,6 +345,7 @@ static const ActionSpec TARGETED_ACTIONS[] = {
     { "new-text-in",                G_CALLBACK(on_new_text_in),                NULL },
     { "new-folder-in",              G_CALLBACK(on_new_folder_in),              NULL },
     { "new-folder-with-selection",  G_CALLBACK(on_new_folder_with_selection),  NULL },
+    { "rename-item",                G_CALLBACK(on_rename_item),                NULL },
 };
 
 /* Stateful toggles: boolean state, no parameter, and an initial state that says
@@ -454,6 +482,14 @@ static GMenuModel* build_menu_model(GMenu** undo_section_out)
     g_menu_append(find_section, "Find in Project...", "win.find-in-project");
     g_menu_append_section(edit_menu, NULL, G_MENU_MODEL(find_section));
     g_object_unref(find_section);
+
+    /* Renaming is the binder's own gesture — a click on the name of a row that
+     * is already selected — and this is the way in for anyone who has not found
+     * that, which is what a menu bar is for. */
+    GMenu* item_section = g_menu_new();
+    g_menu_append(item_section, "Rename", "win.rename");
+    g_menu_append_section(edit_menu, NULL, G_MENU_MODEL(item_section));
+    g_object_unref(item_section);
 
     g_menu_append_submenu(menubar, "_Edit", G_MENU_MODEL(edit_menu));
     g_object_unref(edit_menu);

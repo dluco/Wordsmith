@@ -184,6 +184,32 @@ public:
                     const std::filesystem::path& destination_parent,
                     std::filesystem::path& moved_path, std::string& error) const;
 
+    /** Rename `item` to `new_name`, reporting where it landed through
+     *  `renamed_path`.
+     *
+     *  `new_name` is a user-typed title and goes through `sanitize_name()` the
+     *  way a created item's does, so what the author types is not always what
+     *  the file is called. That is the honest answer here rather than a
+     *  concession: the binder shows filenames, and a name that cannot be a
+     *  filename is not a name this can give. The `title` field in a document's
+     *  frontmatter is a separate thing and is deliberately left alone — one
+     *  gesture changes one name.
+     *
+     *  Where the parent records an order, the item **keeps its place** in it
+     *  rather than falling to the end. A rename is not a move, and an author who
+     *  fixes a typo in chapter three should not find it after chapter twelve.
+     *
+     *  Renaming to the name it already has succeeds without touching the disk.
+     *  The manuscript folder itself cannot be renamed: it is named by
+     *  `project.wordsmith`, so moving it would need that file rewritten in the
+     *  same breath. Does not rescan.
+     *
+     *  Snapshots are keyed by where a document lives, so renaming one orphans
+     *  its previous versions in `.wordsmith/snapshots/` — the same known gap
+     *  moving one has, and for the same reason. See `snapshots.hpp`. */
+    bool rename_entry(const std::filesystem::path& item, std::string_view new_name,
+                      std::filesystem::path& renamed_path, std::string& error) const;
+
     /** True if `path` lies inside the manuscript folder. Guards the mutating
      *  calls above against a caller passing an arbitrary path. */
     bool contains(const std::filesystem::path& path) const;

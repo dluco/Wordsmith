@@ -656,3 +656,36 @@ void project_actions_new_folder_with_selection(WordsmithUiState* state,
     show_name_prompt(state, "New Folder with Selection", "Folder name", item,
                      create_folder_with_selection_named);
 }
+
+/* ── renaming items ──────────────────────────────────────────────────────── */
+
+void project_actions_rename(WordsmithUiState* state, const char* path)
+{
+    if (state->project == NULL) {
+        return;
+    }
+    binder_panel_begin_rename(state->binder, path);
+}
+
+void project_actions_rename_to(WordsmithUiState* state, const char* path,
+                               const char* new_name)
+{
+    if (state->project == NULL || path == NULL || new_name == NULL) {
+        return;
+    }
+
+    char* was_open = save_and_remember_open(state);
+
+    char* renamed = NULL;
+    char* error = NULL;
+    if (!wordsmith_project_rename(state->project, path, new_name, &renamed, &error)) {
+        ui_state_report_error(state, "Could not rename the item", error);
+    } else {
+        /* The same settling a move needs, and for the same reason: the file the
+         * editor is holding has just been given another name. */
+        settle_after_move(state, path, renamed, was_open);
+    }
+
+    wordsmith_free_string(renamed);
+    g_free(was_open);
+}

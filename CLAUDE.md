@@ -418,11 +418,42 @@ reports what is in force rather than deciding it, the way
 `format_bar_show_styles()` does; a `GMenuItem`'s label cannot be changed in
 place, so the item is replaced.
 
-**File operations are not on the stack yet** — create, move, drag-reorder,
-group, and the delete and rename that do not exist as commands. Adding one is a
-new `UndoKind` and an arm in `undo_record_apply()`, not a redesign. What holds
-them back is the question text edits do not raise: what undo should do when the
-file has changed on disk since the record was made.
+**File operations are not on the stack yet** — create, rename, move,
+drag-reorder, group, and the delete that does not exist as a command. Adding one
+is a new `UndoKind` and an arm in `undo_record_apply()`, not a redesign. What
+holds them back is the question text edits do not raise: what undo should do
+when the file has changed on disk since the record was made.
+
+### Renaming
+
+A click on the name of a row **that was already selected** opens an entry over
+it, the macOS gesture; F2 and the binder's context menu are the other ways in,
+both through `project_actions_rename()` so every item command arrives by one
+door. The click gesture is on the row's label rather than the row, leaving the
+icon and the expander's twist arrow alone, and it sits in the bubble phase — so
+it runs before the list view moves the selection, and "already selected" means
+as of before this click, which is the question being asked.
+
+The name is a `GtkStack` of a label and an entry rather than a
+`GtkEditableLabel`, which is this widget already. That type offers no way to
+ellipsize the label it shows, so one long chapter name would make the whole
+binder scroll sideways, and it starts editing on a double click, which is not
+the gesture wanted. Neither is reachable from outside the widget.
+
+`finish_rename()` clears the panel's record of the edit **before** it puts the
+label back, because doing so takes the focus off the entry and the focus handler
+lands in the same function; clearing first is what makes the second call a
+no-op. Enter and clicking away both keep what was typed, Escape and any rebuild
+of the binder throw it away — a reload the author did not ask for is not their
+answer to the entry, which is why `binder_panel_reload()` cancels explicitly
+rather than leaving it to each row unbinding.
+
+`Project::rename_entry()` sanitises the typed name the way a created item's is,
+so what the author types is not always what the file is called; the binder shows
+filenames, and the `title` in a document's frontmatter is a separate thing left
+alone. Where the parent records an order the item **keeps its place** in it,
+through `rename_child()` — forgetting the old name and remembering the new one
+is a move, and fixing a typo in chapter three should not send it to the end.
 
 ### UI wiring
 

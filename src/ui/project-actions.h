@@ -56,6 +56,18 @@ void project_actions_apply_metadata_record(WordsmithUiState* state,
                                            const UndoRecord* record,
                                            gboolean reverse);
 
+/** Open an entry over the name of the item at `path` in the binder. The verb
+ *  rather than something the menu calls on the panel directly, so that F2 and
+ *  the binder's context menu arrive by the same door every other item command
+ *  does. */
+void project_actions_rename(WordsmithUiState* state, const char* path);
+
+/** Rename the item at `path`, which the binder has just had typed into it. Like
+ *  a move, this takes the open document's path out from under the editor, so it
+ *  saves first and reopens the document where it lands. */
+void project_actions_rename_to(WordsmithUiState* state, const char* path,
+                               const char* new_name);
+
 /* The two halves of a binder drag. Both save first, since a move takes the
  * open document's path out from under the editor, and both leave the moved
  * item selected. */

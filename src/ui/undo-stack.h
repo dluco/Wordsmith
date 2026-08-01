@@ -62,12 +62,19 @@
  *
  * ## What is not here yet
  *
- * File operations: create, move, drag-reorder, group, and the delete and rename
- * that do not exist as commands yet. Adding one is a new UndoKind and a new arm
- * in undo_record_apply(), not a redesign — the store is already keyed by binder
- * path. What holds them back is the question they raise and text edits do not:
- * what undo should do when the file has changed on disk since the record was
- * made. */
+ * File operations: create, rename, move, drag-reorder, group, and the delete
+ * that does not exist as a command yet. Adding one is a new UndoKind and a new
+ * arm in undo_record_apply(), not a redesign — the store is already keyed by
+ * binder path. What holds them back is the question they raise and text edits do
+ * not: what undo should do when the file has changed on disk since the record
+ * was made.
+ *
+ * Renaming has a second question behind that one. A history is keyed by path, so
+ * the one belonging to a renamed document is left under a name nothing selects
+ * any more — the same orphaning a move causes, and harmless for the same reason:
+ * it is unreachable, it is bounded by the renames in one sitting, and the
+ * project closing clears it. Carrying a history across is the fix, and it is the
+ * move's to make as much as the rename's. */
 
 /* How many records one item keeps before the oldest is dropped. A day of typing
  * must not grow without a bound, for the reason SESSION_PROJECT_LIMIT exists;

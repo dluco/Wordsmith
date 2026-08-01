@@ -15,8 +15,10 @@
  * its action target. Those actions are installed by menu-bar.c; the panel only
  * names them, which is what keeps it from having to know about the window.
  *
- * Rows can be dragged to rearrange the manuscript. The panel reports where the
- * drop landed and leaves the moving to its owner. */
+ * Rows can be dragged to rearrange the manuscript, and renamed in place. In both
+ * cases the panel reports what the gesture asked for and leaves the doing to its
+ * owner — it never touches the project itself, and rebuilds from whatever is
+ * left on disk. */
 typedef struct BinderPanel BinderPanel;
 
 /* Fired when the selection changes. `path` is NULL when nothing is selected. */
@@ -41,6 +43,13 @@ typedef void (*BinderMoveFn)(const char* source_path, const char* target_path,
  * what that is worth, only that it happened; whoever does can ask for the list
  * below. */
 typedef void (*BinderExpandFn)(void* user_data);
+
+/* Fired when a row's name has been edited in place and accepted. `new_name` is
+ * what the author typed, not a filename: the core sanitises it the same way it
+ * sanitises the name of anything created. The panel does not touch the project
+ * itself — it rebuilds from whatever the handler leaves on disk. */
+typedef void (*BinderRenameFn)(const char* path, const char* new_name,
+                               void* user_data);
 
 BinderPanel* binder_panel_new(void);
 void         binder_panel_free(BinderPanel* binder);
@@ -68,6 +77,23 @@ void binder_panel_set_move_callback(BinderPanel* binder, BinderMoveFn callback,
 
 void binder_panel_set_expand_callback(BinderPanel* binder, BinderExpandFn callback,
                                       void* user_data);
+
+void binder_panel_set_rename_callback(BinderPanel* binder, BinderRenameFn callback,
+                                      void* user_data);
+
+/** Open an entry over the name of the row at `path` and put the cursor in it.
+ *
+ *  Renaming happens in the binder rather than in a dialog because the name being
+ *  changed is the one on screen, and the row is where the author is already
+ *  looking. A click on the name of a row that was *already* selected starts the
+ *  same edit — the macOS gesture — which is why this is only the other way in
+ *  (F2, and the context menu) rather than the only one.
+ *
+ *  A row that has scrolled out of the tree has no widget to edit, and this does
+ *  nothing rather than scrolling the binder around underneath the author. Both
+ *  callers name a row that is on screen: one is the selection, the other was
+ *  just right-clicked. */
+void binder_panel_begin_rename(BinderPanel* binder, const char* path);
 
 /** Point the binder at a project, or NULL to empty it. The project is borrowed
  *  and must outlive the panel's use of it. Rebuilds the tree. */
