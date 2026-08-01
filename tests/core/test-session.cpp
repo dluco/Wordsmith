@@ -142,6 +142,51 @@ void test_round_trip()
     }
 }
 
+/* The inspector's visibility is the one remembered thing that is not a path,
+ * so it has no filesystem to be checked against and every way of not saying it
+ * has to mean the same thing: the pane is on screen. */
+void test_the_inspector_is_remembered()
+{
+    TempDir temp;
+    const fs::path root = make_project(temp, "novel");
+    const fs::path file = temp.path() / "session.json";
+
+    check(wordsmith::ProjectSession().inspector_visible,
+          "a session starts with the inspector on screen");
+    check(wordsmith::session_for(temp.path() / "nothing-here.json", root)
+              .inspector_visible,
+          "a project nothing was saved for shows the inspector");
+
+    wordsmith::ProjectSession written;
+    written.root              = root.string();
+    written.inspector_visible = false;
+
+    std::string error;
+    check(wordsmith::save_project_session(written, file, error),
+          "saving a dismissed inspector succeeds: " + error);
+    check(!wordsmith::session_for(file, root).inspector_visible,
+          "a dismissed inspector round-trips");
+
+    written.inspector_visible = true;
+    check(wordsmith::save_project_session(written, file, error),
+          "saving it back succeeds: " + error);
+    check(wordsmith::session_for(file, root).inspector_visible,
+          "showing it again round-trips");
+
+    /* An entry written before the field existed, and one whose value someone
+     * hand-edited into the wrong type. Neither may put the pane away. */
+    const fs::path older = temp.path() / "older.json";
+    write_file(older, "{\"projects\": [{\"root\": \"" + root.string() + "\"}]}\n");
+    check(wordsmith::session_for(older, root).inspector_visible,
+          "an entry without the field shows the inspector");
+
+    const fs::path wrong_type = temp.path() / "wrong-type.json";
+    write_file(wrong_type, "{\"projects\": [{\"root\": \"" + root.string() +
+                               "\", \"inspector-visible\": \"no\"}]}\n");
+    check(wordsmith::session_for(wrong_type, root).inspector_visible,
+          "a non-boolean value reads as the default rather than as false");
+}
+
 /* Two projects are two entries, and neither disturbs the other. */
 void test_projects_are_kept_apart()
 {
@@ -427,6 +472,7 @@ int main()
 {
     test_missing_file_gives_nothing();
     test_round_trip();
+    test_the_inspector_is_remembered();
     test_projects_are_kept_apart();
     test_saving_again_supersedes_and_promotes();
     test_the_key_is_normalised();

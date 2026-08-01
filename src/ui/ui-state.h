@@ -41,9 +41,18 @@ void ui_state_reload_project(WordsmithUiState* state);
 /** Retitle the window from the project, open document and modified flag. */
 void ui_state_update_title(WordsmithUiState* state);
 
-/* Which folders are open in the binder and which document is being edited are
- * remembered per project, outside it, and put back by ui_state_set_project().
- * See core/session.hpp for where that lands and why a failure is silent. */
+/** Show the inspector, or put it away, and remember it. The View menu's check
+ *  mark is moved to match, so this is the one way to change the pane: the menu
+ *  item goes through it too, rather than the two setting each other.
+ *
+ *  Harmless with no project open — there is simply nowhere to write it down,
+ *  and the pane comes back visible next launch. */
+void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible);
+
+/* Which folders are open in the binder, which document is being edited, and
+ * whether the inspector is on screen are remembered per project, outside it,
+ * and put back by ui_state_set_project(). See core/session.hpp for where that
+ * lands and why a failure is silent. */
 
 /** Note that the view has changed, and write it out shortly. Called on every
  *  expander click and every document opened, so the delay is what keeps a run

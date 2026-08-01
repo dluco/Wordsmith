@@ -548,6 +548,11 @@ void inspector_panel_set_visible(InspectorPanel* inspector, gboolean visible)
     gtk_widget_set_visible(inspector->root, visible);
 }
 
+gboolean inspector_panel_is_visible(InspectorPanel* inspector)
+{
+    return inspector != NULL && gtk_widget_get_visible(inspector->root);
+}
+
 void inspector_panel_set_commit_callback(InspectorPanel* inspector,
                                          InspectorCommitFn callback,
                                          void* user_data)

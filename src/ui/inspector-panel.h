@@ -69,6 +69,11 @@ void inspector_panel_set_commit_callback(InspectorPanel* inspector,
  *  the pane comes back the width the author last dragged it to. */
 void inspector_panel_set_visible(InspectorPanel* inspector, gboolean visible);
 
+/** Whether the pane is on screen. This is what gets written down when the view
+ *  is remembered, so it reads the widget rather than a flag beside it: the
+ *  widget is the one copy that cannot be out of date. */
+gboolean inspector_panel_is_visible(InspectorPanel* inspector);
+
 /** Show the frontmatter of the document at `path`. Reading it is cheap and
  *  keeps the inspector honest about what is on disk rather than what the editor
  *  buffer holds. A file that cannot be read clears the pane. */

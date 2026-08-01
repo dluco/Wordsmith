@@ -137,9 +137,10 @@ size is one answer for the whole application, restored before any window exists.
 
 ### Session state
 
-Which binder folders were twisted open, and which document was being edited,
-are remembered per project in `$XDG_STATE_HOME/wordsmith/session.json`
-(`~/.local/state/...` when that is unset). `session.cpp` reads and writes it.
+Which binder folders were twisted open, which document was being edited, and
+whether the inspector was on screen are remembered per project in
+`$XDG_STATE_HOME/wordsmith/session.json` (`~/.local/state/...` when that is
+unset). `session.cpp` reads and writes it.
 
 Three files could have held this and two are wrong. Not `project.wordsmith`,
 which describes the work: expanded rows would churn it on every click and give
@@ -161,6 +162,13 @@ That is the `children:` contract again: what is written down can only reopen
 what the scan already found. A document deleted outside Wordsmith opens nothing
 instead of raising an error on launch.
 
+`inspector-visible` is the one remembered thing that is not a path, so there is
+no filesystem to check it against and it carries over as written. Every way of
+not saying it — no entry, no key, a hand-edited value of the wrong type —
+defaults to **true**, because a missing answer must never put away a pane the
+author did not ask to lose. Anything non-path added here inherits that rule:
+pick the default that costs nothing when it is wrong.
+
 The UI side lives in `ui-state.c`: `ui_state_remember_session()` starts a
 one-second timer so a run of expander clicks costs one write,
 `ui_state_flush_session()` forces it out ahead of anything that takes the
@@ -169,6 +177,11 @@ selects the saved row rather than loading it directly, so the ordinary
 selection path opens the editor and inspector. `restoring_session` is what keeps
 putting a view back from counting as a change to it. A failed write warns and is
 otherwise ignored; a view that does not come back is not worth a dialog.
+
+`ui_state_set_inspector_visible()` is the only way the inspector is shown or put
+away. The View menu's toggle calls it rather than moving the pane itself, so
+restoring from the session moves the check mark by the same code a click does
+and the two cannot drift apart.
 
 `binder_panel_reload()` also carries the expansion across a rebuild, through the
 same two calls. Without it, creating a document would fold the whole binder

@@ -1,7 +1,6 @@
 #include "menu-bar.h"
 
 #include "editor-panel.h"
-#include "inspector-panel.h"
 #include "project-actions.h"
 #include "text-scale.h"
 
@@ -192,10 +191,10 @@ static void on_text_size_reset(GSimpleAction* action, GVariant* param, gpointer 
  * state and acting on the same value. */
 static void on_show_inspector(GSimpleAction* action, GVariant* value, gpointer user)
 {
-    g_simple_action_set_state(action, value);
-
-    WordsmithUiState* state = user;
-    inspector_panel_set_visible(state->inspector, g_variant_get_boolean(value));
+    (void) action;
+    /* Which sets the state back on this action, moves the pane, and writes the
+     * answer into the session. */
+    ui_state_set_inspector_visible(user, g_variant_get_boolean(value));
 }
 
 static void on_about(GSimpleAction* action, GVariant* param, gpointer user)

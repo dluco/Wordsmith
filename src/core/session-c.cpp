@@ -14,6 +14,7 @@ namespace fs = std::filesystem;
 struct WordsmithSession {
     std::string              open_document;
     std::vector<std::string> expanded;
+    bool                     inspector_visible = true;
 };
 
 namespace {
@@ -56,6 +57,7 @@ WordsmithSession* wordsmith_session_load(const char* root)
         session->expanded.push_back(
             wordsmith::session_absolute(project_root, folder).string());
     }
+    session->inspector_visible = saved.inspector_visible;
     return session;
 }
 
@@ -85,8 +87,14 @@ const char* wordsmith_session_expanded(const WordsmithSession* session, size_t i
     return session->expanded[index].c_str();
 }
 
+int wordsmith_session_inspector_visible(const WordsmithSession* session)
+{
+    return session == nullptr || session->inspector_visible ? 1 : 0;
+}
+
 int wordsmith_session_save(const char* root, const char* open_document,
-                           const char* const* expanded, size_t count, char** error)
+                           const char* const* expanded, size_t count,
+                           int inspector_visible, char** error)
 {
     if (root == nullptr) {
         set_error(error, "no project to save the session of");
@@ -96,6 +104,7 @@ int wordsmith_session_save(const char* root, const char* open_document,
     const fs::path project_root(root);
     wordsmith::ProjectSession session;
     session.root = project_root.string();
+    session.inspector_visible = inspector_visible != 0;
 
     if (open_document != nullptr) {
         session.open_document = wordsmith::session_relative(project_root, open_document);

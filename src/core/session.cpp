@@ -30,6 +30,7 @@ constexpr const char* PROJECTS_KEY = "projects";
 constexpr const char* ROOT_KEY = "root";
 constexpr const char* OPEN_DOCUMENT_KEY = "open-document";
 constexpr const char* EXPANDED_KEY = "expanded";
+constexpr const char* INSPECTOR_VISIBLE_KEY = "inspector-visible";
 
 /* An environment variable's value, or empty when it is unset or blank. XDG
  * treats a set-but-empty variable as unset, and so does this. */
@@ -51,6 +52,19 @@ std::string string_field(const std::map<std::string, argo::json>& fields,
     return found->second.get_string();
 }
 
+/* The boolean at `key`, or `fallback` when the field is absent or is something
+ * other than a boolean. A hand-edited `"yes"` reads as the default rather than
+ * as true, the same way a malformed file reads as no saved state at all. */
+bool bool_field(const std::map<std::string, argo::json>& fields, const char* key,
+                bool fallback)
+{
+    auto found = fields.find(key);
+    if (found == fields.end() || !found->second.is_boolean()) {
+        return fallback;
+    }
+    return found->second.get_bool();
+}
+
 /* One entry, or nothing when it is not an object or names no project. */
 bool read_entry(const argo::json& value, ProjectSession& out)
 {
@@ -64,6 +78,7 @@ bool read_entry(const argo::json& value, ProjectSession& out)
         return false;
     }
     out.open_document = string_field(fields, OPEN_DOCUMENT_KEY);
+    out.inspector_visible = bool_field(fields, INSPECTOR_VISIBLE_KEY, true);
 
     auto expanded = fields.find(EXPANDED_KEY);
     if (expanded != fields.end() && expanded->second.is_array()) {
@@ -87,6 +102,7 @@ argo::json write_entry(const ProjectSession& session)
         {ROOT_KEY, argo::json::string(session.root)},
         {OPEN_DOCUMENT_KEY, argo::json::string(session.open_document)},
         {EXPANDED_KEY, expanded},
+        {INSPECTOR_VISIBLE_KEY, argo::json::boolean_value(session.inspector_visible)},
     });
 }
 
@@ -199,6 +215,10 @@ ProjectSession session_for(const fs::path& file, const fs::path& root)
         if (session_key(saved.root) != fs::path(key)) {
             continue;
         }
+
+        /* Not a claim about the filesystem, so there is nothing to check it
+         * against and it carries over as written. */
+        result.inspector_visible = saved.inspector_visible;
 
         /* Everything below is a hint about the filesystem, so the filesystem
          * gets the last word. A document that has been deleted or a folder that

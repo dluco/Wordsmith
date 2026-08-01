@@ -38,6 +38,26 @@ void ui_state_free(WordsmithUiState* state)
     g_free(state);
 }
 
+/* ── panes ───────────────────────────────────────────────────────────────── */
+
+void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible)
+{
+    /* The menu item's own handler calls in here rather than doing this itself,
+     * so a restore from the session moves the check mark by the same code that
+     * a click does. Setting the state does not emit "change-state", so this
+     * does not come back around. */
+    GAction* action = state->window != NULL
+        ? g_action_map_lookup_action(G_ACTION_MAP(state->window), "show-inspector")
+        : NULL;
+    if (action != NULL) {
+        g_simple_action_set_state(G_SIMPLE_ACTION(action),
+                                  g_variant_new_boolean(visible));
+    }
+
+    inspector_panel_set_visible(state->inspector, visible);
+    ui_state_remember_session(state);
+}
+
 /* ── session ─────────────────────────────────────────────────────────────── */
 
 static void save_session_now(WordsmithUiState* state)
@@ -52,7 +72,9 @@ static void save_session_now(WordsmithUiState* state)
     if (!wordsmith_session_save(wordsmith_project_root(state->project),
                                 editor_panel_path(state->editor),
                                 (const char* const*) expanded,
-                                g_strv_length(expanded), &error)) {
+                                g_strv_length(expanded),
+                                inspector_panel_is_visible(state->inspector),
+                                &error)) {
         /* A view that does not come back is not worth a dialog in the author's
          * way, and there is nothing they could do about it if it were. */
         g_warning("could not remember the view: %s",
@@ -117,6 +139,11 @@ static void restore_session(WordsmithUiState* state)
      * would, so the editor and the inspector follow without being told
      * separately. A NULL path selects nothing. */
     binder_panel_select_path(state->binder, wordsmith_session_open_document(session));
+    /* After the selection, which loads the pane but does not decide whether it
+     * is on screen. The guard keeps this from counting as a change to write
+     * straight back out. */
+    ui_state_set_inspector_visible(
+        state, wordsmith_session_inspector_visible(session));
     state->restoring_session = FALSE;
 
     g_strfreev(expanded);
