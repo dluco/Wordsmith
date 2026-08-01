@@ -81,6 +81,20 @@ gives a mis-ordered binder, never a broken one.
 `load_binder()` in `project.cpp` is the documented seam if this ever needs to
 become a central index instead.
 
+### Every write is atomic
+
+Nothing truncates a file in place. `write_file_atomically()` in `safe-write.cpp`
+writes to a hidden sibling temp file, fsyncs it, renames it over the target, and
+fsyncs the directory; `write_document()` and `save_settings()` are both thin
+wrappers over it, and **anything new that writes into the project must go
+through it too**. The temp file is a sibling rather than one in `/tmp` because
+`rename` is only atomic within a filesystem.
+
+This guarantees a write lands whole. It does not guarantee the bytes were right
+— editor save is a lossy round trip through `markup.hpp`, so a bug there commits
+a well-formed wrong document. That needs a separate mechanism (keeping the
+previous version), and it does not exist yet.
+
 ### Frontmatter: surgical, never lossy
 
 `yaml.cpp` is a deliberately small YAML reader (no anchors, no flow mappings,

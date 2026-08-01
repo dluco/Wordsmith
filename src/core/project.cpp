@@ -1,5 +1,6 @@
 #include "project.hpp"
 
+#include "safe-write.hpp"
 #include "yaml.hpp"
 
 #include <argo/argo.hpp>
@@ -367,18 +368,8 @@ bool Project::save_settings(std::string& error) const
         {"manuscript", argo::json::string(manuscript_folder_)},
     });
 
-    const fs::path project_file = root_ / PROJECT_FILE_NAME;
-    std::ofstream stream(project_file, std::ios::binary | std::ios::trunc);
-    if (!stream) {
-        error = "cannot write " + project_file.string();
-        return false;
-    }
-    stream << document.serialize() << '\n';
-    if (!stream) {
-        error = "failed writing " + project_file.string();
-        return false;
-    }
-    return true;
+    return write_file_atomically(root_ / PROJECT_FILE_NAME,
+                                 document.serialize() + "\n", error);
 }
 
 bool Project::contains(const fs::path& path) const
@@ -644,17 +635,7 @@ bool read_document(const fs::path& path, std::string& out, std::string& error)
 bool write_document(const fs::path& path, std::string_view markdown,
                     std::string& error)
 {
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    if (!stream) {
-        error = "cannot write " + path.string();
-        return false;
-    }
-    stream.write(markdown.data(), static_cast<std::streamsize>(markdown.size()));
-    if (!stream) {
-        error = "failed writing " + path.string();
-        return false;
-    }
-    return true;
+    return write_file_atomically(path, markdown, error);
 }
 
 std::string sanitize_name(std::string_view title)

@@ -5,6 +5,7 @@ add_library(wordsmith-core STATIC
     markup-c.cpp
     project.cpp
     project-c.cpp
+    safe-write.cpp
     yaml.cpp
     frontmatter.cpp
     frontmatter-c.cpp
@@ -25,6 +26,7 @@ target_sources(wordsmith-core PUBLIC
     markup-c.h
     project.hpp
     project-c.h
+    safe-write.hpp
     yaml.hpp
     frontmatter.hpp
     frontmatter-c.h
