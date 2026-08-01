@@ -82,6 +82,14 @@ int wordsmith_project_move(WordsmithProject* project, const char* source_path,
                             const char* parent_path, char** moved_path,
                             char** error);
 
+/** Move the item at `source_path` into `anchor_path`'s folder and place it just
+ *  before `anchor_path`, or just after it when `after` is non-zero. Records the
+ *  resulting order. On success `moved_path`, if non-NULL, receives the new
+ *  location. */
+int wordsmith_project_move_beside(WordsmithProject* project,
+                                   const char* source_path, const char* anchor_path,
+                                   int after, char** moved_path, char** error);
+
 /** Create a folder called `name` beside `item_path` and move the item into it.
  *  `folder_path` and `moved_path`, when non-NULL, receive the new folder and
  *  the item's new location. */

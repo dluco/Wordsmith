@@ -419,6 +419,100 @@ void test_move_maintains_child_order()
           "move order: an unarranged folder stays free of a sidecar");
 }
 
+/* The names of a folder's children in the order the binder would show them. */
+std::string binder_order_of(const fs::path& folder)
+{
+    const wordsmith::BinderEntry tree = wordsmith::load_binder(folder);
+    std::string out;
+    for (const wordsmith::BinderEntry& child : tree.children) {
+        if (!out.empty()) {
+            out += " ";
+        }
+        out += child.path.filename().string();
+    }
+    return out;
+}
+
+void test_move_beside_reorders()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "beside: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path made;
+    project->create_document(manuscript, "one", made, error);
+    project->create_document(manuscript, "two", made, error);
+    project->create_document(manuscript, "three", made, error);
+
+    /* Nothing arranged yet, so the alphabetical order is what the drag rearranges
+     * — and the whole of it has to be written down, not just the two names the
+     * drag mentioned. */
+    fs::path moved;
+    check(project->move_entry_beside(manuscript / "two.md", manuscript / "one.md",
+                                     false, moved, error),
+          "beside: dropping above the first item succeeds (" + error + ")");
+    check_equal(binder_order_of(manuscript), "two.md one.md three.md",
+                "beside: the item lands above the anchor");
+
+    check(project->move_entry_beside(manuscript / "two.md", manuscript / "three.md",
+                                     true, moved, error),
+          "beside: dropping below the last item succeeds (" + error + ")");
+    check_equal(binder_order_of(manuscript), "one.md three.md two.md",
+                "beside: the item lands below the anchor");
+
+    /* Dropped on itself: no move, and no rewrite that could shuffle anything. */
+    check(project->move_entry_beside(manuscript / "two.md", manuscript / "two.md",
+                                     false, moved, error),
+          "beside: dropping an item on itself succeeds (" + error + ")");
+    check_equal(binder_order_of(manuscript), "one.md three.md two.md",
+                "beside: dropping an item on itself changes nothing");
+
+    check(!project->move_entry_beside(manuscript / "one.md", temp.path() / "away.md",
+                                      false, moved, error),
+          "beside: an anchor outside the manuscript is rejected");
+}
+
+void test_move_beside_across_folders()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "beside across: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path part;
+    fs::path made;
+    project->create_folder(manuscript, "part", part, error);
+    project->create_document(part, "alpha", made, error);
+    project->create_document(part, "beta", made, error);
+    project->create_document(manuscript, "stray", made, error);
+
+    fs::path moved;
+    check(project->move_entry_beside(manuscript / "stray.md", part / "alpha.md",
+                                     false, moved, error),
+          "beside across: the move succeeds (" + error + ")");
+    check(moved == part / "stray.md" && fs::is_regular_file(moved),
+          "beside across: the item arrives in the anchor's folder");
+    check_equal(binder_order_of(part), "stray.md alpha.md beta.md",
+                "beside across: it takes the position it was dropped at");
+
+    /* The folder it left is rearranged only if it was arranged to begin with. */
+    check(!fs::exists(manuscript / "metadata.yaml"),
+          "beside across: the folder left behind gains no sidecar");
+
+    /* A folder still cannot swallow itself, whichever end the drag names. */
+    check(!project->move_entry_beside(part, part / "alpha.md", false, moved, error),
+          "beside across: a folder cannot be dropped inside itself");
+}
+
 void test_group_into_new_folder()
 {
     TempDir temp;
@@ -514,6 +608,8 @@ int main()
     test_child_order_preserves_the_sidecar();
     test_move_entry();
     test_move_maintains_child_order();
+    test_move_beside_reorders();
+    test_move_beside_across_folders();
     test_group_into_new_folder();
     test_document_read_write();
     test_sanitize_name();

@@ -52,10 +52,16 @@ static BinderItem* binder_item_new(const WordsmithBinderNode* node)
 
 /* ── panel ───────────────────────────────────────────────────────────────── */
 
-/* Set on each row widget in `setup`, so a right-click can find which row it
- * landed on by walking up from the picked widget. The GtkListItem outlives the
- * items bound into it, which is what makes it safe to stash. */
+/* Set on each row widget in `setup`, so a right-click or a drop can find which
+ * row it landed on by walking up from the picked widget. The GtkListItem
+ * outlives the items bound into it, which is what makes it safe to stash. */
 #define ROW_LIST_ITEM_KEY "binder-list-item"
+
+/* Drag feedback: a line along the edge the item would land on, or a filled row
+ * when it would go inside a folder. */
+#define DROP_BEFORE_CLASS "binder-drop-above"
+#define DROP_INTO_CLASS   "binder-drop-into"
+#define DROP_AFTER_CLASS  "binder-drop-below"
 
 struct BinderPanel {
     GtkWidget*        root;   /* borrowed once parented into the window */
@@ -68,7 +74,287 @@ struct BinderPanel {
 
     BinderSelectFn select_callback;
     void*          select_user_data;
+
+    BinderMoveFn   move_callback;
+    void*          move_user_data;
 };
+
+/* ── rows ────────────────────────────────────────────────────────────────── */
+
+/* The BinderItem shown by a row widget — the expander built in `setup` — or
+ * NULL if it is between bindings. Owned by the caller. */
+static BinderItem* row_item(GtkWidget* row)
+{
+    GtkListItem* list_item = g_object_get_data(G_OBJECT(row), ROW_LIST_ITEM_KEY);
+    if (list_item == NULL) {
+        return NULL;
+    }
+    GtkTreeListRow* tree_row = gtk_list_item_get_item(list_item);
+    return tree_row != NULL ? gtk_tree_list_row_get_item(tree_row) : NULL;
+}
+
+/* The row widget under (x, y) in list-view coordinates, or NULL over the empty
+ * space below the tree. Borrowed. */
+static GtkWidget* row_widget_at(BinderPanel* binder, double x, double y)
+{
+    GtkWidget* picked = gtk_widget_pick(GTK_WIDGET(binder->list_view), x, y,
+                                        GTK_PICK_DEFAULT);
+
+    while (picked != NULL && picked != GTK_WIDGET(binder->list_view)) {
+        if (g_object_get_data(G_OBJECT(picked), ROW_LIST_ITEM_KEY) != NULL) {
+            return picked;
+        }
+        picked = gtk_widget_get_parent(picked);
+    }
+    return NULL;
+}
+
+/* The BinderItem under (x, y) in list-view coordinates. Owned by the caller. */
+static BinderItem* row_item_at(BinderPanel* binder, double x, double y)
+{
+    GtkWidget* row = row_widget_at(binder, x, y);
+    return row != NULL ? row_item(row) : NULL;
+}
+
+/* ── drag and drop ───────────────────────────────────────────────────────── */
+
+/* The dragged row travels as a BinderItem rather than as its path in a string.
+ * Drags are within the one process, so the object goes across intact — and a
+ * private type means no stray text drag from another window can look like a
+ * binder row, and nothing outside can be handed one of ours. */
+
+/* Whether `candidate` is `ancestor` or sits beneath it. Both paths come from
+ * the core, spelled the same way, so a prefix test is enough here; the core
+ * checks properly again before it moves anything. */
+static gboolean path_is_within(const char* ancestor, const char* candidate)
+{
+    if (g_strcmp0(ancestor, candidate) == 0) {
+        return TRUE;
+    }
+    char* prefix = g_strconcat(ancestor, G_DIR_SEPARATOR_S, NULL);
+    const gboolean within = g_str_has_prefix(candidate, prefix);
+    g_free(prefix);
+    return within;
+}
+
+static BinderDropZone zone_at(GtkWidget* row, double y, gboolean is_folder)
+{
+    const double height = gtk_widget_get_height(row);
+    if (height <= 0.0) {
+        return BINDER_DROP_BEFORE;
+    }
+    /* A document has no inside to offer, so it is split down the middle. A
+     * folder keeps its middle half for dropping things in, leaving a quarter at
+     * each end to slot alongside it. */
+    if (!is_folder) {
+        return y < height / 2.0 ? BINDER_DROP_BEFORE : BINDER_DROP_AFTER;
+    }
+    if (y < height * 0.25) {
+        return BINDER_DROP_BEFORE;
+    }
+    if (y > height * 0.75) {
+        return BINDER_DROP_AFTER;
+    }
+    return BINDER_DROP_INTO;
+}
+
+static void clear_drop_feedback(GtkWidget* widget)
+{
+    gtk_widget_remove_css_class(widget, DROP_BEFORE_CLASS);
+    gtk_widget_remove_css_class(widget, DROP_INTO_CLASS);
+    gtk_widget_remove_css_class(widget, DROP_AFTER_CLASS);
+}
+
+static void show_drop_feedback(GtkWidget* widget, BinderDropZone zone)
+{
+    clear_drop_feedback(widget);
+    gtk_widget_add_css_class(widget,
+                             zone == BINDER_DROP_BEFORE ? DROP_BEFORE_CLASS
+                                 : zone == BINDER_DROP_AFTER ? DROP_AFTER_CLASS
+                                                             : DROP_INTO_CLASS);
+}
+
+/* The BinderItem being dragged, or NULL if the drag is carrying something else
+ * or has not offered its data yet. Borrowed. */
+static BinderItem* dragged_item(const GValue* value)
+{
+    if (value == NULL || !G_VALUE_HOLDS(value, BINDER_TYPE_ITEM)) {
+        return NULL;
+    }
+    return g_value_get_object(value);
+}
+
+/* Refused drops are the ones the core would reject anyway, caught here so the
+ * pointer says no rather than the drop raising an error dialog. */
+static gboolean drop_is_allowed(BinderItem* dragged, BinderItem* onto)
+{
+    if (dragged == NULL || onto == NULL) {
+        return FALSE;
+    }
+    if (g_strcmp0(dragged->path, onto->path) == 0) {
+        return FALSE;   /* onto itself */
+    }
+    /* A folder cannot be dropped anywhere inside its own subtree, whether that
+     * means into a descendant folder or beside a document within it. */
+    return !(dragged->is_folder && path_is_within(dragged->path, onto->path));
+}
+
+/* Performing the move rebuilds the whole binder, which destroys the very row
+ * whose drop handler asked for it. So the request is queued and run once the
+ * drop has finished and the widget tree is nobody's business but ours. */
+typedef struct PendingMove {
+    BinderPanel*   binder;
+    char*          source;
+    char*          target;
+    BinderDropZone zone;
+} PendingMove;
+
+static gboolean run_pending_move(gpointer user_data)
+{
+    PendingMove* move = user_data;
+
+    if (move->binder->move_callback != NULL) {
+        move->binder->move_callback(move->source, move->target, move->zone,
+                                    move->binder->move_user_data);
+    }
+
+    g_free(move->source);
+    g_free(move->target);
+    g_free(move);
+    return G_SOURCE_REMOVE;
+}
+
+static void queue_move(BinderPanel* binder, const char* source, const char* target,
+                       BinderDropZone zone)
+{
+    PendingMove* move = g_new0(PendingMove, 1);
+    move->binder = binder;
+    move->source = g_strdup(source);
+    move->target = g_strdup(target);
+    move->zone   = zone;
+    g_idle_add(run_pending_move, move);
+}
+
+static GdkContentProvider* on_drag_prepare(GtkDragSource* source, double x, double y,
+                                           gpointer user_data)
+{
+    (void) x;
+    (void) y;
+    (void) user_data;
+
+    GtkWidget* row = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(source));
+    BinderItem* item = row_item(row);
+    if (item == NULL) {
+        return NULL;
+    }
+
+    GdkContentProvider* provider =
+        gdk_content_provider_new_typed(BINDER_TYPE_ITEM, item);
+    g_object_unref(item);
+    return provider;
+}
+
+static void on_drag_begin(GtkDragSource* source, GdkDrag* drag, gpointer user_data)
+{
+    (void) drag;
+    (void) user_data;
+
+    /* Drag the row's own likeness, so what is being moved is never in doubt. */
+    GtkWidget* row = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(source));
+    GdkPaintable* likeness = gtk_widget_paintable_new(row);
+    gtk_drag_source_set_icon(source, likeness, 0, 0);
+    g_object_unref(likeness);
+}
+
+static GdkDragAction on_row_drop_motion(GtkDropTarget* target, double x, double y,
+                                        gpointer user_data)
+{
+    (void) x;
+    (void) user_data;
+
+    GtkWidget* row = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
+    BinderItem* onto = row_item(row);
+    if (onto == NULL) {
+        return 0;
+    }
+
+    GdkDragAction action = 0;
+    if (drop_is_allowed(dragged_item(gtk_drop_target_get_value(target)), onto)) {
+        show_drop_feedback(row, zone_at(row, y, onto->is_folder));
+        action = GDK_ACTION_MOVE;
+    } else {
+        clear_drop_feedback(row);
+    }
+
+    g_object_unref(onto);
+    return action;
+}
+
+static void on_row_drop_leave(GtkDropTarget* target, gpointer user_data)
+{
+    (void) user_data;
+    clear_drop_feedback(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target)));
+}
+
+static gboolean on_row_drop(GtkDropTarget* target, const GValue* value, double x,
+                            double y, gpointer user_data)
+{
+    (void) x;
+
+    BinderPanel* binder = user_data;
+    GtkWidget* row = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
+    clear_drop_feedback(row);
+
+    BinderItem* onto = row_item(row);
+    BinderItem* dragged = dragged_item(value);
+    if (!drop_is_allowed(dragged, onto)) {
+        g_clear_object(&onto);
+        return FALSE;
+    }
+
+    queue_move(binder, dragged->path, onto->path,
+               zone_at(row, y, onto->is_folder));
+
+    g_object_unref(onto);
+    return TRUE;
+}
+
+/* The empty space below the tree stands for the manuscript folder itself, so a
+ * drop there lifts an item back out to the top level. Rows have their own drop
+ * targets and answer first; this one only has to make sure it is not quietly
+ * catching a drop a row already refused. */
+static GdkDragAction on_empty_drop_motion(GtkDropTarget* target, double x, double y,
+                                          gpointer user_data)
+{
+    BinderPanel* binder = user_data;
+    if (binder->project == NULL || row_widget_at(binder, x, y) != NULL) {
+        return 0;
+    }
+    if (dragged_item(gtk_drop_target_get_value(target)) == NULL) {
+        return 0;
+    }
+    return GDK_ACTION_MOVE;
+}
+
+static gboolean on_empty_drop(GtkDropTarget* target, const GValue* value, double x,
+                              double y, gpointer user_data)
+{
+    (void) target;
+
+    BinderPanel* binder = user_data;
+    BinderItem* dragged = dragged_item(value);
+    if (binder->project == NULL || dragged == NULL
+        || row_widget_at(binder, x, y) != NULL) {
+        return FALSE;
+    }
+
+    queue_move(binder, dragged->path,
+               wordsmith_project_manuscript_path(binder->project),
+               BINDER_DROP_INTO);
+    return TRUE;
+}
+
+/* ── list model ─────────────────────────────────────────────────────────── */
 
 /* Children of `item`, or NULL for a document. GtkTreeListModel takes the
  * reference it is handed and uses a NULL return to mean "not expandable". */
@@ -97,7 +383,6 @@ static void on_setup_row(GtkSignalListItemFactory* factory, GtkListItem* list_it
                          gpointer user_data)
 {
     (void) factory;
-    (void) user_data;
 
     GtkWidget* expander = gtk_tree_expander_new();
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -110,6 +395,24 @@ static void on_setup_row(GtkSignalListItemFactory* factory, GtkListItem* list_it
     gtk_box_append(GTK_BOX(box), label);
     gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), box);
     g_object_set_data(G_OBJECT(expander), ROW_LIST_ITEM_KEY, list_item);
+
+    /* Both controllers live on the row for as long as the list item does, and
+     * read the item they are acting on out of it at the moment they fire —
+     * rows are recycled as the list scrolls, so nothing may be captured here. */
+    GtkDragSource* drag = gtk_drag_source_new();
+    gtk_drag_source_set_actions(drag, GDK_ACTION_MOVE);
+    g_signal_connect(drag, "prepare", G_CALLBACK(on_drag_prepare), NULL);
+    g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), NULL);
+    gtk_widget_add_controller(expander, GTK_EVENT_CONTROLLER(drag));
+
+    GtkDropTarget* drop = gtk_drop_target_new(BINDER_TYPE_ITEM, GDK_ACTION_MOVE);
+    /* Preloaded, so "motion" can see what is being dragged and refuse a drop
+     * before the pointer is released rather than after. */
+    gtk_drop_target_set_preload(drop, TRUE);
+    g_signal_connect(drop, "motion", G_CALLBACK(on_row_drop_motion), user_data);
+    g_signal_connect(drop, "leave", G_CALLBACK(on_row_drop_leave), user_data);
+    g_signal_connect(drop, "drop", G_CALLBACK(on_row_drop), user_data);
+    gtk_widget_add_controller(expander, GTK_EVENT_CONTROLLER(drop));
 
     gtk_list_item_set_child(list_item, expander);
 }
@@ -162,24 +465,6 @@ static void on_selection_changed(GObject* object, GParamSpec* spec,
 }
 
 /* ── context menu ────────────────────────────────────────────────────────── */
-
-/* The BinderItem under (x, y) in list-view coordinates, or NULL over empty
- * space. Owned by the caller. */
-static BinderItem* row_item_at(BinderPanel* binder, double x, double y)
-{
-    GtkWidget* picked = gtk_widget_pick(GTK_WIDGET(binder->list_view), x, y,
-                                        GTK_PICK_DEFAULT);
-
-    while (picked != NULL && picked != GTK_WIDGET(binder->list_view)) {
-        GtkListItem* list_item = g_object_get_data(G_OBJECT(picked), ROW_LIST_ITEM_KEY);
-        if (list_item != NULL) {
-            GtkTreeListRow* row = gtk_list_item_get_item(list_item);
-            return row != NULL ? gtk_tree_list_row_get_item(row) : NULL;
-        }
-        picked = gtk_widget_get_parent(picked);
-    }
-    return NULL;
-}
 
 static void append_targeted(GMenu* section, const char* label, const char* action,
                             const char* target)
@@ -384,7 +669,7 @@ BinderPanel* binder_panel_new(void)
     BinderPanel* binder = g_new0(BinderPanel, 1);
 
     GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
-    g_signal_connect(factory, "setup", G_CALLBACK(on_setup_row), NULL);
+    g_signal_connect(factory, "setup", G_CALLBACK(on_setup_row), binder);
     g_signal_connect(factory, "bind", G_CALLBACK(on_bind_row), NULL);
 
     GtkWidget* list_view = gtk_list_view_new(NULL, factory);
@@ -413,6 +698,13 @@ BinderPanel* binder_panel_new(void)
     g_signal_connect(secondary, "pressed", G_CALLBACK(on_secondary_click), binder);
     gtk_widget_add_controller(list_view, GTK_EVENT_CONTROLLER(secondary));
 
+    /* Catches the drops the rows do not: the empty space under the tree. */
+    GtkDropTarget* to_root = gtk_drop_target_new(BINDER_TYPE_ITEM, GDK_ACTION_MOVE);
+    gtk_drop_target_set_preload(to_root, TRUE);
+    g_signal_connect(to_root, "motion", G_CALLBACK(on_empty_drop_motion), binder);
+    g_signal_connect(to_root, "drop", G_CALLBACK(on_empty_drop), binder);
+    gtk_widget_add_controller(list_view, GTK_EVENT_CONTROLLER(to_root));
+
     binder->root = scroller;
 
     /* Start with an empty model so the view is valid before a project opens. */
@@ -439,4 +731,11 @@ void binder_panel_set_select_callback(BinderPanel* binder,
 {
     binder->select_callback  = callback;
     binder->select_user_data = user_data;
+}
+
+void binder_panel_set_move_callback(BinderPanel* binder, BinderMoveFn callback,
+                                    void* user_data)
+{
+    binder->move_callback  = callback;
+    binder->move_user_data = user_data;
 }

@@ -28,6 +28,22 @@
     font-size: 1.0em;
 }
 
+/* Binder drag feedback. A line along the edge the row would land against, or a
+ * tinted row when the drop would put it inside that folder — so "between" and
+ * "into" never look like the same gesture. */
+.binder-drop-above {
+    box-shadow: inset 0 2px @accent_bg_color;
+}
+
+.binder-drop-below {
+    box-shadow: inset 0 -2px @accent_bg_color;
+}
+
+.binder-drop-into {
+    background-color: alpha(@accent_bg_color, 0.30);
+    border-radius: 4px;
+}
+
 .inspector-heading {
     color: alpha(currentColor, 0.55);
     font-weight: bold;

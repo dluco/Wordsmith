@@ -72,6 +72,15 @@ bool path_is_within(const fs::path& ancestor, const fs::path& candidate)
     return true;
 }
 
+/* Whether two paths name the same place, spelling aside. */
+bool paths_equal(const fs::path& left, const fs::path& right)
+{
+    std::error_code code;
+    const fs::path a = fs::weakly_canonical(left, code);
+    const fs::path b = fs::weakly_canonical(right, code);
+    return !code && a == b;
+}
+
 } // namespace
 
 /* ── folder metadata ────────────────────────────────────────────────────── */
@@ -171,6 +180,59 @@ void apply_child_order(std::vector<BinderEntry>& entries,
     entries = std::move(sorted);
 }
 
+/* The immediate children of `folder`, filtered and ordered as the binder shows
+ * them, with folders left unexpanded. Both the recursive scan and anything that
+ * needs to know a folder's running order come through here, so there is one
+ * answer to "what is in this folder, and in what order". */
+std::vector<BinderEntry> ordered_children(const fs::path& folder)
+{
+    std::vector<BinderEntry> entries;
+
+    std::error_code code;
+    if (!fs::is_directory(folder, code)) {
+        return entries;
+    }
+
+    for (const fs::directory_entry& entry : fs::directory_iterator(folder, code)) {
+        const fs::path& path = entry.path();
+        // Skip dotfiles: editor cruft and, later, our own sidecars.
+        if (!path.filename().empty() && path.filename().string()[0] == '.') {
+            continue;
+        }
+
+        BinderEntry child;
+        if (entry.is_directory(code)) {
+            child.is_folder = true;
+            child.name      = path.filename().string();
+        } else if (entry.is_regular_file(code) && is_document(path)) {
+            child.name = path.stem().string();
+        } else {
+            continue;
+        }
+        child.path        = path;
+        child.path_string = path.string();
+        entries.push_back(std::move(child));
+    }
+
+    /* Alphabetical first, so that whatever the sidecar does not mention still
+     * lands somewhere predictable. */
+    std::sort(entries.begin(), entries.end(), binder_order);
+    apply_child_order(entries, read_child_order(folder));
+    return entries;
+}
+
+/* The same list, named the way the sidecar names things. */
+std::vector<std::string> ordered_child_names(const fs::path& folder)
+{
+    const std::vector<BinderEntry> entries = ordered_children(folder);
+    std::vector<std::string> names;
+    names.reserve(entries.size());
+    for (const BinderEntry& entry : entries) {
+        names.push_back(entry.path.filename().string());
+    }
+    return names;
+}
+
 } // namespace
 
 BinderEntry load_binder(const fs::path& manuscript_root)
@@ -180,35 +242,13 @@ BinderEntry load_binder(const fs::path& manuscript_root)
     root.path        = manuscript_root;
     root.path_string = manuscript_root.string();
     root.is_folder   = true;
+    root.children    = ordered_children(manuscript_root);
 
-    std::error_code code;
-    if (!fs::is_directory(manuscript_root, code)) {
-        return root;
-    }
-
-    for (const fs::directory_entry& entry :
-         fs::directory_iterator(manuscript_root, code)) {
-        const fs::path& path = entry.path();
-        // Skip dotfiles: editor cruft and, later, our own sidecars.
-        if (!path.filename().empty() && path.filename().string()[0] == '.') {
-            continue;
-        }
-
-        if (entry.is_directory(code)) {
-            root.children.push_back(load_binder(path));
-        } else if (entry.is_regular_file(code) && is_document(path)) {
-            BinderEntry document;
-            document.name        = path.stem().string();
-            document.path        = path;
-            document.path_string = path.string();
-            root.children.push_back(std::move(document));
+    for (BinderEntry& child : root.children) {
+        if (child.is_folder) {
+            child = load_binder(child.path);
         }
     }
-
-    /* Alphabetical first, so that whatever the sidecar does not mention still
-     * lands somewhere predictable. */
-    std::sort(root.children.begin(), root.children.end(), binder_order);
-    apply_child_order(root.children, read_child_order(manuscript_root));
     return root;
 }
 
@@ -498,7 +538,7 @@ bool Project::move_entry(const fs::path& source, const fs::path& destination_par
     }
 
     const fs::path target = destination_parent / source.filename();
-    if (path_is_within(target, source) && path_is_within(source, target)) {
+    if (paths_equal(target, source)) {
         moved_path = source;   // already there; nothing to do
         return true;
     }
@@ -524,6 +564,45 @@ bool Project::move_entry(const fs::path& source, const fs::path& destination_par
 
     moved_path = target;
     return true;
+}
+
+bool Project::move_entry_beside(const fs::path& source, const fs::path& anchor,
+                                bool after, fs::path& moved_path,
+                                std::string& error) const
+{
+    if (!contains(anchor)) {
+        error = "the item being dropped onto is outside the manuscript";
+        return false;
+    }
+    if (paths_equal(source, anchor)) {
+        moved_path = source;   // dropped on itself
+        return true;
+    }
+
+    const fs::path    parent      = anchor.parent_path();
+    const std::string anchor_name = anchor.filename().string();
+
+    if (!move_entry(source, parent, moved_path, error)) {
+        return false;
+    }
+
+    /* Take the order from the binder rather than from the sidecar, so that a
+     * folder nobody has arranged yet gets its alphabetical order written down
+     * as it stands, with the new arrival slotted in. Otherwise the first drag
+     * into such a folder would record two names and leave everything else to
+     * pile up behind them. */
+    std::vector<std::string> order = ordered_child_names(parent);
+    const std::string moved_name = moved_path.filename().string();
+    order.erase(std::remove(order.begin(), order.end(), moved_name), order.end());
+
+    const auto at = std::find(order.begin(), order.end(), anchor_name);
+    if (at == order.end()) {
+        order.push_back(moved_name);   // the anchor went away under us
+    } else {
+        order.insert(after ? at + 1 : at, moved_name);
+    }
+
+    return write_child_order(parent, order, error);
 }
 
 bool Project::create_document(const fs::path& parent, std::string_view name,

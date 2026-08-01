@@ -32,3 +32,15 @@ void project_actions_new_folder_with_selection(WordsmithUiState* state,
 
 /** Open `path` in the editor, saving the current document first. */
 void project_actions_open_document(WordsmithUiState* state, const char* path);
+
+/* The two halves of a binder drag. Both save first, since a move takes the
+ * open document's path out from under the editor, and both leave the moved
+ * item selected. */
+
+/** Move `source` into the folder `folder`, at the end of it. */
+void project_actions_move_into(WordsmithUiState* state, const char* source,
+                               const char* folder);
+
+/** Move `source` alongside `anchor`, just before it or just after it. */
+void project_actions_move_beside(WordsmithUiState* state, const char* source,
+                                 const char* anchor, int after);

@@ -316,7 +316,7 @@ void project_actions_new_text(WordsmithUiState* state)
     g_free(parent);
 }
 
-/* ── gathering an item into a new folder ─────────────────────────────────── */
+/* ── moving items ────────────────────────────────────────────────────────── */
 
 /* Where `open` ends up once `from` has been moved to `to`, or NULL if the move
  * does not touch it. Covers both the document itself moving and a folder
@@ -339,13 +339,80 @@ static char* remap_open_document(const char* open, const char* from, const char*
     return moved;
 }
 
+/* Rebuild the binder around a completed move, and leave the moved item both
+ * selected and, if the editor was showing it, still open. `was_open` is the
+ * editor's path from before the move. */
+static void settle_after_move(WordsmithUiState* state, const char* from,
+                              const char* to, const char* was_open)
+{
+    ui_state_reload_project(state);
+
+    char* reopen = remap_open_document(was_open, from, to);
+    if (reopen != NULL) {
+        project_actions_open_document(state, reopen);
+        binder_panel_select_path(state->binder, reopen);
+        g_free(reopen);
+    } else {
+        binder_panel_select_path(state->binder, to);
+    }
+}
+
+/* Commit before any move: afterwards the editor's path no longer exists, and
+ * saving into it would either fail or strand the text somewhere odd. The
+ * caller frees the returned path. */
+static char* save_and_remember_open(WordsmithUiState* state)
+{
+    project_actions_save(state);
+    return g_strdup(editor_panel_path(state->editor));
+}
+
+void project_actions_move_into(WordsmithUiState* state, const char* source,
+                               const char* folder)
+{
+    if (state->project == NULL || source == NULL || folder == NULL) {
+        return;
+    }
+
+    char* was_open = save_and_remember_open(state);
+
+    char* moved = NULL;
+    char* error = NULL;
+    if (!wordsmith_project_move(state->project, source, folder, &moved, &error)) {
+        ui_state_report_error(state, "Could not move the item", error);
+    } else {
+        settle_after_move(state, source, moved, was_open);
+    }
+
+    wordsmith_free_string(moved);
+    g_free(was_open);
+}
+
+void project_actions_move_beside(WordsmithUiState* state, const char* source,
+                                 const char* anchor, int after)
+{
+    if (state->project == NULL || source == NULL || anchor == NULL) {
+        return;
+    }
+
+    char* was_open = save_and_remember_open(state);
+
+    char* moved = NULL;
+    char* error = NULL;
+    if (!wordsmith_project_move_beside(state->project, source, anchor, after, &moved,
+                                        &error)) {
+        ui_state_report_error(state, "Could not move the item", error);
+    } else {
+        settle_after_move(state, source, moved, was_open);
+    }
+
+    wordsmith_free_string(moved);
+    g_free(was_open);
+}
+
 static void create_folder_with_selection_named(WordsmithUiState* state,
                                                const char* name, const char* item)
 {
-    /* Commit first: after the move the editor's path no longer exists, and
-     * saving into it would either fail or strand the text somewhere odd. */
-    project_actions_save(state);
-    char* was_open = g_strdup(editor_panel_path(state->editor));
+    char* was_open = save_and_remember_open(state);
 
     char* folder = NULL;
     char* moved = NULL;
@@ -355,16 +422,7 @@ static void create_folder_with_selection_named(WordsmithUiState* state,
         ui_state_report_error(state, "Could not gather the item into a new folder",
                               error);
     } else {
-        ui_state_reload_project(state);
-
-        char* reopen = remap_open_document(was_open, item, moved);
-        if (reopen != NULL) {
-            project_actions_open_document(state, reopen);
-            binder_panel_select_path(state->binder, reopen);
-            g_free(reopen);
-        } else {
-            binder_panel_select_path(state->binder, moved);
-        }
+        settle_after_move(state, item, moved, was_open);
     }
 
     wordsmith_free_string(moved);

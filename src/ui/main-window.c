@@ -30,6 +30,21 @@ static void on_binder_selected(const char* path, int is_folder, void* user_data)
     project_actions_open_document(state, path);
 }
 
+/* A drag in the binder either puts an item inside a folder or sets it down next
+ * to a sibling. The panel works out which from where the pointer let go; here
+ * that just picks the verb. */
+static void on_binder_moved(const char* source_path, const char* target_path,
+                            BinderDropZone zone, void* user_data)
+{
+    WordsmithUiState* state = user_data;
+    if (zone == BINDER_DROP_INTO) {
+        project_actions_move_into(state, source_path, target_path);
+        return;
+    }
+    project_actions_move_beside(state, source_path, target_path,
+                                zone == BINDER_DROP_AFTER);
+}
+
 static void on_editor_modified(int modified, void* user_data)
 {
     (void) modified;
@@ -72,6 +87,7 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     state->inspector = inspector_panel_new();
 
     binder_panel_set_select_callback(state->binder, on_binder_selected, state);
+    binder_panel_set_move_callback(state->binder, on_binder_moved, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
 
     /* Editor and inspector share the space to the right of the binder. */

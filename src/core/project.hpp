@@ -157,6 +157,21 @@ public:
                                std::filesystem::path& moved_path,
                                std::string& error) const;
 
+    /** Move `source` into `anchor`'s folder and place it immediately before or
+     *  after `anchor`, reporting where it landed through `moved_path`.
+     *
+     *  This is the verb behind a drag: the gesture says "put this next to
+     *  that", and where that falls in the list is the core's problem, not the
+     *  caller's. Unlike the plain `move_entry`, it writes the destination's
+     *  order down and creates the sidecar if there is none — asking for a
+     *  position is exactly the moment a folder becomes arranged. Dropping
+     *  something beside itself succeeds without doing anything. Does not
+     *  rescan. */
+    bool move_entry_beside(const std::filesystem::path& source,
+                           const std::filesystem::path& anchor, bool after,
+                           std::filesystem::path& moved_path,
+                           std::string& error) const;
+
     /** Move `source` into `destination_parent`, keeping its name, and report
      *  where it landed through `moved_path`.
      *

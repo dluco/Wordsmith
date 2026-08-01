@@ -251,6 +251,29 @@ int wordsmith_project_move(WordsmithProject* project, const char* source_path,
     return 1;
 }
 
+int wordsmith_project_move_beside(WordsmithProject* project,
+                                   const char* source_path, const char* anchor_path,
+                                   int after, char** moved_path, char** error)
+{
+    if (project == nullptr || source_path == nullptr || anchor_path == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path moved;
+    std::string message;
+    if (!project->project->move_entry_beside(fs::path(source_path),
+                                             fs::path(anchor_path), after != 0,
+                                             moved, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (moved_path != nullptr) {
+        *moved_path = duplicate(moved.string());
+    }
+    return 1;
+}
+
 int wordsmith_project_group_into_new_folder(WordsmithProject* project,
                                              const char* item_path,
                                              const char* name, char** folder_path,
