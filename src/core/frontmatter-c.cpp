@@ -1,11 +1,13 @@
 #include "frontmatter-c.h"
 
 #include "frontmatter.hpp"
+#include "yaml.hpp"
 
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <string>
+#include <vector>
 
 using wordsmith::frontmatter::Document;
 using wordsmith::yaml::Node;
@@ -37,6 +39,32 @@ const Node* lookup(const WordsmithFrontmatter* frontmatter, const char* key)
         return nullptr;
     }
     return frontmatter->doc.root.find(key);
+}
+
+/* A NULL entry ends the list early: the C side may hand over a NULL-terminated
+ * array and a count that includes the terminator. */
+std::vector<std::string> collect(const char* const* items, std::size_t count)
+{
+    std::vector<std::string> out;
+    if (items == nullptr) {
+        return out;
+    }
+    out.reserve(count);
+    for (std::size_t index = 0; index < count; index++) {
+        if (items[index] == nullptr) {
+            break;
+        }
+        out.emplace_back(items[index]);
+    }
+    return out;
+}
+
+std::optional<std::string_view> optional_view(const char* value)
+{
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    return std::string_view(value);
 }
 
 } // namespace
@@ -159,9 +187,33 @@ char* wordsmith_frontmatter_set_field(const char* text, const char* key,
     if (text == nullptr || key == nullptr) {
         return nullptr;
     }
-    std::optional<std::string_view> replacement;
-    if (value != nullptr) {
-        replacement = std::string_view(value);
+    return duplicate(wordsmith::frontmatter::set_field(text, key, optional_view(value)));
+}
+
+char* wordsmith_frontmatter_set_sequence(const char* text, const char* key,
+                                         const char* const* items, size_t count)
+{
+    if (text == nullptr || key == nullptr) {
+        return nullptr;
     }
-    return duplicate(wordsmith::frontmatter::set_field(text, key, replacement));
+    return duplicate(wordsmith::frontmatter::set_sequence(text, key,
+                                                          collect(items, count)));
+}
+
+char* wordsmith_frontmatter_set_field_yaml(const char* text, const char* key,
+                                           const char* value)
+{
+    if (text == nullptr || key == nullptr) {
+        return nullptr;
+    }
+    return duplicate(wordsmith::yaml::set_field(text, key, optional_view(value)));
+}
+
+char* wordsmith_frontmatter_set_sequence_yaml(const char* text, const char* key,
+                                              const char* const* items, size_t count)
+{
+    if (text == nullptr || key == nullptr) {
+        return nullptr;
+    }
+    return duplicate(wordsmith::yaml::set_sequence(text, key, collect(items, count)));
 }

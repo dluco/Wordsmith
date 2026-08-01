@@ -4,6 +4,7 @@
 #include "editor-panel.h"
 #include "inspector-panel.h"
 
+#include "core/frontmatter-c.h"
 #include "core/markup-c.h"
 #include "core/project-c.h"
 
@@ -239,6 +240,94 @@ void project_actions_open_document(WordsmithUiState* state, const char* path)
     }
     inspector_panel_set_document(state->inspector, path);
     ui_state_update_title(state);
+}
+
+/* ── metadata ────────────────────────────────────────────────────────────── */
+
+/* The file a field actually lands in: the document itself, or the sidecar
+ * inside the folder. Caller frees with g_free(). */
+static char* metadata_file_for(const InspectorEdit* edit)
+{
+    if (!edit->is_folder) {
+        return g_strdup(edit->path);
+    }
+
+    char* sidecar = wordsmith_folder_metadata_path(edit->path);
+    char* copy    = g_strdup(sidecar);
+    wordsmith_free_string(sidecar);
+    return copy;
+}
+
+/* Apply one edit to `text`. A folder's sidecar is bare YAML and a document's
+ * frontmatter is fenced, which is the whole of the difference. */
+static char* apply_edit(const InspectorEdit* edit, const char* text)
+{
+    if (edit->items != NULL) {
+        return edit->is_folder
+                   ? wordsmith_frontmatter_set_sequence_yaml(text, edit->key,
+                                                             edit->items,
+                                                             edit->item_count)
+                   : wordsmith_frontmatter_set_sequence(text, edit->key, edit->items,
+                                                        edit->item_count);
+    }
+    return edit->is_folder
+               ? wordsmith_frontmatter_set_field_yaml(text, edit->key, edit->value)
+               : wordsmith_frontmatter_set_field(text, edit->key, edit->value);
+}
+
+void project_actions_set_metadata(WordsmithUiState* state, const InspectorEdit* edit)
+{
+    if (edit == NULL || edit->path == NULL || edit->key == NULL) {
+        return;
+    }
+
+    /* Commit the buffer before rewriting the file under it: the editor puts the
+     * frontmatter back as it found it, so saving afterwards would undo this. */
+    const gboolean open_here =
+        !edit->is_folder
+        && g_strcmp0(edit->path, editor_panel_path(state->editor)) == 0;
+    if (open_here) {
+        project_actions_save(state);
+    }
+
+    char* target = metadata_file_for(edit);
+    if (target == NULL) {
+        return;
+    }
+
+    char* error = NULL;
+    char* text  = wordsmith_document_read(target, &error);
+    if (text == NULL && !edit->is_folder) {
+        ui_state_report_error(state, "Could not read the document", error);
+        g_free(target);
+        return;
+    }
+    /* A folder with no sidecar yet is not a failure: writing the first field is
+     * what creates it. */
+    wordsmith_free_string(error);
+    error = NULL;
+
+    char* updated = apply_edit(edit, text != NULL ? text : "");
+    wordsmith_free_string(text);
+
+    if (updated == NULL) {
+        ui_state_report_error(state, "Could not update the metadata", NULL);
+        g_free(target);
+        return;
+    }
+
+    const int ok = wordsmith_document_write(target, updated, &error);
+    wordsmith_free_string(updated);
+    g_free(target);
+
+    if (!ok) {
+        ui_state_report_error(state, "Could not save the metadata", error);
+    } else if (open_here) {
+        editor_panel_refresh_frontmatter(state->editor);
+    }
+
+    /* Either way, show what is on disk rather than what was typed. */
+    inspector_panel_reload(state->inspector);
 }
 
 /* ── creating binder items ───────────────────────────────────────────────── */

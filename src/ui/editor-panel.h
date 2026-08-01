@@ -40,6 +40,15 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error);
  *  failure. Succeeds trivially when nothing is open. */
 int editor_panel_save(EditorPanel* editor, char** error);
 
+/** Re-read the open document's frontmatter from disk, leaving the body in the
+ *  buffer alone.
+ *
+ *  Saving puts the frontmatter bytes back as they were when the document was
+ *  loaded, so anything that rewrites those bytes underneath the editor — the
+ *  inspector, editing a field — has to say so here, or the next save will put
+ *  the old metadata back. Does nothing when nothing is open. */
+void editor_panel_refresh_frontmatter(EditorPanel* editor);
+
 /** Drop the open document and clear the view. */
 void editor_panel_close(EditorPanel* editor);
 

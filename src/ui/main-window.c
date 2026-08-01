@@ -45,6 +45,13 @@ static void on_binder_moved(const char* source_path, const char* target_path,
                                 zone == BINDER_DROP_AFTER);
 }
 
+/* The inspector types a field; where those bytes go, and what else has to know
+ * about them, is the project's problem rather than the pane's. */
+static void on_inspector_commit(const InspectorEdit* edit, void* user_data)
+{
+    project_actions_set_metadata(user_data, edit);
+}
+
 static void on_editor_modified(int modified, void* user_data)
 {
     (void) modified;
@@ -89,6 +96,7 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     binder_panel_set_select_callback(state->binder, on_binder_selected, state);
     binder_panel_set_move_callback(state->binder, on_binder_moved, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
+    inspector_panel_set_commit_callback(state->inspector, on_inspector_commit, state);
 
     /* Editor and inspector share the space to the right of the binder. */
     GtkWidget* editor_inspector_paned =

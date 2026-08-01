@@ -275,6 +275,33 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     return 1;
 }
 
+void editor_panel_refresh_frontmatter(EditorPanel* editor)
+{
+    if (editor == NULL || editor->path == NULL) {
+        return;
+    }
+
+    char* error = NULL;
+    char* text  = wordsmith_document_read(editor->path, &error);
+    if (text == NULL) {
+        /* The buffer still holds the body, so keeping the prologue we have is
+         * the outcome that loses least. */
+        wordsmith_free_string(error);
+        return;
+    }
+
+    WordsmithFrontmatter* frontmatter = wordsmith_frontmatter_parse(text);
+    size_t body = 0;
+    if (frontmatter != NULL) {
+        body = wordsmith_frontmatter_body_offset(frontmatter);
+        wordsmith_frontmatter_free(frontmatter);
+    }
+
+    g_free(editor->prologue);
+    editor->prologue = g_strndup(text, body);
+    wordsmith_free_string(text);
+}
+
 /* ── saving ──────────────────────────────────────────────────────────────── */
 
 /* Which block kind a line carries, read from the tags at its first character. */

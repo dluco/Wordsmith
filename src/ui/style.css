@@ -28,6 +28,37 @@
     font-size: 1.0em;
 }
 
+/* Editable fields stay flat until they are pointed at, so the pane still reads
+ * as a list of answers; the outline on hover is what says they can be typed in,
+ * and an empty document shows the same four fields as a full one. */
+.inspector-field-entry,
+.inspector-field-paragraph {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0;
+    min-height: 0;
+}
+
+.inspector-field-paragraph text {
+    background: none;
+}
+
+.inspector-field-entry:hover,
+.inspector-field-paragraph:hover {
+    border-color: alpha(currentColor, 0.20);
+}
+
+.inspector-field-entry:focus-within,
+.inspector-field-paragraph:focus-within {
+    background-color: @view_bg_color;
+    border-color: @accent_bg_color;
+}
+
+.inspector-field-paragraph:focus-within text {
+    background-color: @view_bg_color;
+}
+
 /* Binder drag feedback. A line along the edge the row would land against, or a
  * tinted row when the drop would put it inside that folder — so "between" and
  * "into" never look like the same gesture. */

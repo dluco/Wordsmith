@@ -1,5 +1,6 @@
 #pragma once
 
+#include "inspector-panel.h"
 #include "ui-state.h"
 
 /* The verbs behind the File and Insert menus. Kept apart from menu-bar.c so
@@ -32,6 +33,18 @@ void project_actions_new_folder_with_selection(WordsmithUiState* state,
 
 /** Open `path` in the editor, saving the current document first. */
 void project_actions_open_document(WordsmithUiState* state, const char* path);
+
+/** Write one field the inspector committed back to the file behind it: a
+ *  document's frontmatter, or a folder's sidecar, creating the sidecar if there
+ *  is none.
+ *
+ *  This is the verb rather than something the inspector does itself because the
+ *  document may also be open in the editor, which keeps the frontmatter bytes
+ *  aside and puts them back on save. The buffer therefore has to be committed
+ *  before the rewrite and told about it afterwards, and both ends of that live
+ *  here. */
+void project_actions_set_metadata(WordsmithUiState* state,
+                                  const InspectorEdit* edit);
 
 /* The two halves of a binder drag. Both save first, since a move takes the
  * open document's path out from under the editor, and both leave the moved

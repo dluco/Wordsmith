@@ -64,12 +64,28 @@ size_t      wordsmith_frontmatter_diagnostic_count(const WordsmithFrontmatter* f
 const char* wordsmith_frontmatter_diagnostic_at(const WordsmithFrontmatter* frontmatter,
                                                 size_t index, size_t* line);
 
-/** Return `text` with `key` set to `value`, or with `key` removed when `value`
- *  is NULL. Every other byte is preserved: field order, quoting, comments, and
- *  the body. Caller owns the result and frees it with wordsmith_free_string()
- *  from markup-c.h. */
+/* Writing. Every call returns `text` with one field changed and every other
+ * byte preserved — field order, quoting, comments, and the body. The caller
+ * owns the result and frees it with wordsmith_free_string() from markup-c.h.
+ *
+ * The `_yaml` variants edit a bare YAML document, as the parse/parse_yaml pair
+ * above reads one. A folder's metadata.yaml has no fences, so putting it
+ * through the fenced calls would wrap the whole sidecar in a `---` block. */
+
+/** Set `key` to `value`, or remove `key` when `value` is NULL. */
 char* wordsmith_frontmatter_set_field(const char* text, const char* key,
                                       const char* value);
+
+/** Write `items` under `key` as a block sequence. */
+char* wordsmith_frontmatter_set_sequence(const char* text, const char* key,
+                                         const char* const* items, size_t count);
+
+char* wordsmith_frontmatter_set_field_yaml(const char* text, const char* key,
+                                           const char* value);
+
+char* wordsmith_frontmatter_set_sequence_yaml(const char* text, const char* key,
+                                              const char* const* items,
+                                              size_t count);
 
 #ifdef __cplusplus
 }

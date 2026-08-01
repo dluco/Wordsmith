@@ -358,6 +358,31 @@ void test_set_over_a_sequence()
                 "set: replacing a sequence removes all of its items");
 }
 
+/* Tags arrive from the inspector as a list, and a document that has never had
+ * frontmatter is the common case for the first one written. */
+void test_set_sequence()
+{
+    check_equal(wordsmith::frontmatter::set_sequence(
+                    "---\ntitle: x\n---\nBody.\n", "tags", {"one", "two"}),
+                "---\ntitle: x\ntags:\n  - one\n  - two\n---\nBody.\n",
+                "set sequence: appended to an existing block");
+
+    check_equal(wordsmith::frontmatter::set_sequence("Body.\n", "tags", {"one"}),
+                "---\ntags:\n  - one\n---\nBody.\n",
+                "set sequence: opens a block when there is none");
+
+    check_equal(wordsmith::frontmatter::set_sequence(
+                    "---\ntags:\n  - old\nstatus: draft\n---\nBody.\n", "tags",
+                    {"new"}),
+                "---\ntags:\n  - new\nstatus: draft\n---\nBody.\n",
+                "set sequence: replaces every item and keeps what follows");
+
+    check_equal(wordsmith::frontmatter::set_sequence(
+                    "---\ntitle: x\n---\nBody.\n", "tags", {}),
+                "---\ntitle: x\ntags: []\n---\nBody.\n",
+                "set sequence: no items is written as deliberately none");
+}
+
 void test_erase_field()
 {
     check_equal(wordsmith::frontmatter::set_field(
@@ -435,6 +460,7 @@ int main()
     test_set_multiline_value();
     test_set_over_a_block_scalar();
     test_set_over_a_sequence();
+    test_set_sequence();
     test_erase_field();
     test_erase_missing_field_is_a_no_op();
     test_set_round_trip();
