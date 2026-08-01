@@ -2,6 +2,7 @@
 
 #include "binder-panel.h"
 #include "editor-panel.h"
+#include "format-bar.h"
 #include "inspector-panel.h"
 #include "menu-bar.h"
 #include "project-actions.h"
@@ -56,6 +57,15 @@ static void on_editor_modified(int modified, void* user_data)
 {
     (void) modified;
     ui_state_update_title(user_data);
+}
+
+/* The format bar shows what the text at the cursor is wearing. The editor is
+ * what reads the tags and the bar is what draws them; joining the two is the
+ * window's job, the same as every other pair of panels here. */
+static void on_editor_styles(uint32_t flags, void* user_data)
+{
+    WordsmithUiState* state = user_data;
+    format_bar_show_styles(state->format_bar, flags);
 }
 
 /* A folder twisted open or shut is worth remembering, and nothing else. The
@@ -127,21 +137,30 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     state->menu_bar = menu_bar_new(state, app);
     gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(window), TRUE);
 
-    state->binder    = binder_panel_new();
-    state->editor    = editor_panel_new();
-    state->inspector = inspector_panel_new();
+    state->binder     = binder_panel_new();
+    state->format_bar = format_bar_new();
+    state->editor     = editor_panel_new();
+    state->inspector  = inspector_panel_new();
 
     binder_panel_set_select_callback(state->binder, on_binder_selected, state);
     binder_panel_set_move_callback(state->binder, on_binder_moved, state);
     binder_panel_set_expand_callback(state->binder, on_binder_expanded, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
+    editor_panel_set_styles_callback(state->editor, on_editor_styles, state);
     inspector_panel_set_commit_callback(state->inspector, on_inspector_commit, state);
+
+    /* The format bar sits above the manuscript and shares its column, so it
+     * spans the editor alone rather than the window: hiding the inspector must
+     * not move the buttons, and composition mode takes the bar with the rest. */
+    GtkWidget* editor_column = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_append(GTK_BOX(editor_column), format_bar_widget(state->format_bar));
+    gtk_widget_set_vexpand(editor_panel_widget(state->editor), TRUE);
+    gtk_box_append(GTK_BOX(editor_column), editor_panel_widget(state->editor));
 
     /* Editor and inspector share the space to the right of the binder. */
     GtkWidget* editor_inspector_paned =
         gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_set_start_child(GTK_PANED(editor_inspector_paned),
-                              editor_panel_widget(state->editor));
+    gtk_paned_set_start_child(GTK_PANED(editor_inspector_paned), editor_column);
     gtk_paned_set_end_child(GTK_PANED(editor_inspector_paned),
                             inspector_panel_widget(state->inspector));
     gtk_paned_set_resize_start_child(GTK_PANED(editor_inspector_paned), TRUE);

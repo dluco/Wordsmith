@@ -31,6 +31,13 @@ typedef struct EditorPanel EditorPanel;
 /* Fired when the document's modified flag changes, so the window can retitle. */
 typedef void (*EditorModifiedFn)(int modified, void* user_data);
 
+/* Fired when the inline styles in force at the cursor change, as a set of
+ * WORDSMITH_MARKUP_SPAN_* flags. The format bar follows the text this way
+ * rather than by watching the buffer itself: what a run of characters is
+ * wearing is the editor's own reading of its tags, and only one place should be
+ * doing that reading. */
+typedef void (*EditorStylesFn)(uint32_t flags, void* user_data);
+
 EditorPanel* editor_panel_new(void);
 void         editor_panel_free(EditorPanel* editor);
 
@@ -40,6 +47,14 @@ GtkWidget* editor_panel_widget(EditorPanel* editor);
 void editor_panel_set_modified_callback(EditorPanel* editor,
                                         EditorModifiedFn callback,
                                         void* user_data);
+
+/** Watch the styles at the cursor. Fires on every cursor move and after any
+ *  change this panel makes to the tags, so whoever is showing them never has to
+ *  poll. Setting the callback does not fire it; the first report follows the
+ *  first movement or the first document opened. */
+void editor_panel_set_styles_callback(EditorPanel* editor,
+                                      EditorStylesFn callback,
+                                      void* user_data);
 
 /** Load `path` into the view. Returns 0 and fills `error` (owned by the
  *  caller, freed with wordsmith_free_string) on failure. */
@@ -69,6 +84,27 @@ gboolean editor_panel_is_modified(EditorPanel* editor);
 /** Toggle one WORDSMITH_MARKUP_SPAN_* style over the selection. Does nothing
  *  when the selection is empty. */
 void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag);
+
+/** The inline styles in force at the cursor, as WORDSMITH_MARKUP_SPAN_* flags.
+ *  0 when nothing is open. */
+uint32_t editor_panel_styles_at_cursor(EditorPanel* editor);
+
+/** The styles `buffer` is wearing where the author is standing, given the
+ *  inline tags in bit order — `inline_tags[n]` is the tag for `1 << n`, which
+ *  is the order the WORDSMITH_MARKUP_SPAN_* flags are declared in. A NULL entry
+ *  is a style this buffer does not carry.
+ *
+ *  Two questions, because the answer has two jobs. Over a selection it reports
+ *  a style only when the whole selection wears it, which is exactly the rule
+ *  editor_panel_toggle_style() applies — so a lit button always means "click to
+ *  take this off". With no selection it reports the character *behind* the
+ *  cursor, which is the one the author just typed past, falling back to the
+ *  character ahead at the start of a line where there is nothing behind.
+ *
+ *  Split out from the panel so both rules can be checked without a display; a
+ *  GtkTextBuffer and its tags are plain objects. */
+uint32_t editor_style_flags(GtkTextBuffer* buffer, GtkTextTag* const* inline_tags,
+                            int count);
 
 /* Composition mode's side of the editor: the text draws as a column of fixed
  * width in the middle of the pane, however wide the pane has become.

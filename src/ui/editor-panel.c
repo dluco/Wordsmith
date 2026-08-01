@@ -41,7 +41,14 @@ struct EditorPanel {
 
     EditorModifiedFn modified_callback;
     void*            modified_user_data;
+
+    EditorStylesFn styles_callback;
+    void*          styles_user_data;
 };
+
+/* Defined with the rest of the styling, but needed by everything that leaves
+ * the cursor somewhere new. */
+static void notify_styles(EditorPanel* editor);
 
 /* ── tags ────────────────────────────────────────────────────────────────── */
 
@@ -276,6 +283,7 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     editor->loading = FALSE;
 
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), TRUE);
+    notify_styles(editor);
     return 1;
 }
 
@@ -518,6 +526,86 @@ int editor_panel_save(EditorPanel* editor, char** error)
 
 /* ── styling ─────────────────────────────────────────────────────────────── */
 
+/* Whether `tag` runs unbroken across [start, end). Asked by the toggle, to
+ * decide which way it goes, and by the report the format bar follows, so that a
+ * lit button and the click that puts it out are answering the same question.
+ *
+ * The next toggle of the tag is where it stops, so this costs one step rather
+ * than one per character — worth having on a path that runs on every cursor
+ * move over a selection that may be the whole manuscript. */
+static gboolean tag_covers(const GtkTextIter* start, const GtkTextIter* end,
+                           GtkTextTag* tag)
+{
+    if (tag == NULL || !gtk_text_iter_has_tag(start, tag)) {
+        return FALSE;
+    }
+
+    GtkTextIter cursor = *start;
+    if (!gtk_text_iter_forward_to_tag_toggle(&cursor, tag)) {
+        return TRUE;   /* on from here to the end of the buffer */
+    }
+    return gtk_text_iter_compare(&cursor, end) >= 0;
+}
+
+uint32_t editor_style_flags(GtkTextBuffer* buffer, GtkTextTag* const* inline_tags,
+                            int count)
+{
+    if (buffer == NULL || inline_tags == NULL) {
+        return 0;
+    }
+
+    GtkTextIter start;
+    GtkTextIter end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) {
+        /* The character behind the cursor is the one the author has just typed
+         * past, and the one whose styling they would say they are "in". At the
+         * start of a line there is nothing behind — the newline before it
+         * belongs to the line above — so the character ahead answers instead. */
+        gtk_text_buffer_get_iter_at_mark(buffer, &start,
+                                         gtk_text_buffer_get_insert(buffer));
+        if (!gtk_text_iter_starts_line(&start)) {
+            gtk_text_iter_backward_char(&start);
+        }
+        end = start;
+        gtk_text_iter_forward_char(&end);
+    }
+
+    uint32_t flags = 0;
+    for (int bit = 0; bit < count; bit++) {
+        if (tag_covers(&start, &end, inline_tags[bit])) {
+            flags |= 1u << bit;
+        }
+    }
+    return flags;
+}
+
+uint32_t editor_panel_styles_at_cursor(EditorPanel* editor)
+{
+    if (editor == NULL || editor->path == NULL) {
+        return 0;
+    }
+    return editor_style_flags(editor->buffer, editor->inline_tags, INLINE_TAG_COUNT);
+}
+
+static void notify_styles(EditorPanel* editor)
+{
+    if (editor->styles_callback == NULL) {
+        return;
+    }
+    editor->styles_callback(editor_panel_styles_at_cursor(editor),
+                            editor->styles_user_data);
+}
+
+/* Typing, moving and selecting all move the insertion point, so one signal
+ * covers every way the answer changes from the author's side. What this panel
+ * does to the tags itself does not move the cursor, and says so directly. */
+static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_data)
+{
+    (void) buffer;
+    (void) spec;
+    notify_styles(user_data);
+}
+
 void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
 {
     const int index = inline_tag_index(span_flag);
@@ -535,21 +623,13 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
 
     /* Toggle off only when the whole selection already carries the tag;
      * otherwise a mixed selection becomes uniformly styled. */
-    gboolean fully_tagged = TRUE;
-    GtkTextIter cursor = start;
-    while (gtk_text_iter_compare(&cursor, &end) < 0) {
-        if (!gtk_text_iter_has_tag(&cursor, tag)) {
-            fully_tagged = FALSE;
-            break;
-        }
-        gtk_text_iter_forward_char(&cursor);
-    }
-
-    if (fully_tagged) {
+    if (tag_covers(&start, &end, tag)) {
         gtk_text_buffer_remove_tag(editor->buffer, tag, &start, &end);
     } else {
         gtk_text_buffer_apply_tag(editor->buffer, tag, &start, &end);
     }
+
+    notify_styles(editor);
 }
 
 /* ── editing verbs ───────────────────────────────────────────────────────── */
@@ -669,6 +749,8 @@ EditorPanel* editor_panel_new(void)
 
     g_signal_connect(editor->buffer, "modified-changed",
                      G_CALLBACK(on_buffer_modified), editor);
+    g_signal_connect(editor->buffer, "notify::cursor-position",
+                     G_CALLBACK(on_cursor_moved), editor);
 
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "editor-pane");
@@ -707,6 +789,13 @@ void editor_panel_set_modified_callback(EditorPanel* editor,
     editor->modified_user_data = user_data;
 }
 
+void editor_panel_set_styles_callback(EditorPanel* editor, EditorStylesFn callback,
+                                      void* user_data)
+{
+    editor->styles_callback  = callback;
+    editor->styles_user_data = user_data;
+}
+
 void editor_panel_close(EditorPanel* editor)
 {
     editor->loading = TRUE;
@@ -717,6 +806,7 @@ void editor_panel_close(EditorPanel* editor)
     g_clear_pointer(&editor->path, g_free);
     g_clear_pointer(&editor->prologue, g_free);
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), FALSE);
+    notify_styles(editor);
 }
 
 const char* editor_panel_path(EditorPanel* editor)

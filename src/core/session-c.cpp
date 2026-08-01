@@ -16,6 +16,7 @@ struct WordsmithSession {
     std::vector<std::string> expanded;
     bool                     binder_visible = true;
     bool                     inspector_visible = true;
+    bool                     format_bar_visible = true;
 };
 
 namespace {
@@ -60,6 +61,7 @@ WordsmithSession* wordsmith_session_load(const char* root)
     }
     session->binder_visible = saved.binder_visible;
     session->inspector_visible = saved.inspector_visible;
+    session->format_bar_visible = saved.format_bar_visible;
     return session;
 }
 
@@ -92,10 +94,11 @@ const char* wordsmith_session_expanded(const WordsmithSession* session, size_t i
 WordsmithSessionPanes wordsmith_session_panes(const WordsmithSession* session)
 {
     if (session == nullptr) {
-        return WordsmithSessionPanes{1, 1};
+        return WordsmithSessionPanes{1, 1, 1};
     }
     return WordsmithSessionPanes{session->binder_visible ? 1 : 0,
-                                 session->inspector_visible ? 1 : 0};
+                                 session->inspector_visible ? 1 : 0,
+                                 session->format_bar_visible ? 1 : 0};
 }
 
 int wordsmith_session_save(const char* root, const char* open_document,
@@ -112,6 +115,7 @@ int wordsmith_session_save(const char* root, const char* open_document,
     session.root = project_root.string();
     session.binder_visible = panes.binder_visible != 0;
     session.inspector_visible = panes.inspector_visible != 0;
+    session.format_bar_visible = panes.format_bar_visible != 0;
 
     if (open_document != nullptr) {
         session.open_document = wordsmith::session_relative(project_root, open_document);

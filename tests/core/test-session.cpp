@@ -142,9 +142,9 @@ void test_round_trip()
     }
 }
 
-/* The two pane flags are the remembered things that are not paths, so they have
- * no filesystem to be checked against and every way of not saying one has to
- * mean the same thing: the pane is on screen. */
+/* The visibility flags are the remembered things that are not paths, so they
+ * have no filesystem to be checked against and every way of not saying one has
+ * to mean the same thing: it is on screen. */
 void test_the_panes_are_remembered()
 {
     TempDir temp;
@@ -155,45 +155,73 @@ void test_the_panes_are_remembered()
           "a session starts with the binder on screen");
     check(wordsmith::ProjectSession().inspector_visible,
           "a session starts with the inspector on screen");
+    check(wordsmith::ProjectSession().format_bar_visible,
+          "a session starts with the format bar on screen");
     check(wordsmith::session_for(temp.path() / "nothing-here.json", root)
               .binder_visible,
           "a project nothing was saved for shows the binder");
     check(wordsmith::session_for(temp.path() / "nothing-here.json", root)
               .inspector_visible,
           "a project nothing was saved for shows the inspector");
+    check(wordsmith::session_for(temp.path() / "nothing-here.json", root)
+              .format_bar_visible,
+          "a project nothing was saved for shows the format bar");
 
     wordsmith::ProjectSession written;
-    written.root              = root.string();
-    written.binder_visible    = false;
-    written.inspector_visible = false;
+    written.root               = root.string();
+    written.binder_visible     = false;
+    written.inspector_visible  = false;
+    written.format_bar_visible = false;
 
     std::string error;
     check(wordsmith::save_project_session(written, file, error),
-          "saving two dismissed panes succeeds: " + error);
+          "saving three dismissed panes succeeds: " + error);
     check(!wordsmith::session_for(file, root).binder_visible,
           "a dismissed binder round-trips");
     check(!wordsmith::session_for(file, root).inspector_visible,
           "a dismissed inspector round-trips");
+    check(!wordsmith::session_for(file, root).format_bar_visible,
+          "a dismissed format bar round-trips");
 
-    /* One of each, which is what catches the two being written or read in the
-     * wrong order — the failure a struct at the C bridge is there to prevent. */
-    written.binder_visible    = false;
-    written.inspector_visible = true;
+    /* One of each, which is what catches the flags being written or read in the
+     * wrong order — the failure a struct at the C bridge is there to prevent.
+     * Each round has a different one shown, so no two can trade places without
+     * one of the three rounds noticing. */
+    written.binder_visible     = false;
+    written.inspector_visible  = true;
+    written.format_bar_visible = false;
     check(wordsmith::save_project_session(written, file, error),
           "saving one of each succeeds: " + error);
     check(!wordsmith::session_for(file, root).binder_visible,
           "the dismissed binder is the one that stays dismissed");
     check(wordsmith::session_for(file, root).inspector_visible,
           "the shown inspector is the one that stays shown");
+    check(!wordsmith::session_for(file, root).format_bar_visible,
+          "and the format bar stays dismissed beside it");
 
-    written.binder_visible    = true;
-    written.inspector_visible = false;
+    written.binder_visible     = true;
+    written.inspector_visible  = false;
+    written.format_bar_visible = false;
     check(wordsmith::save_project_session(written, file, error),
           "saving the other way round succeeds: " + error);
     check(wordsmith::session_for(file, root).binder_visible,
           "and the flags do not trade places");
     check(!wordsmith::session_for(file, root).inspector_visible,
           "in either direction");
+    check(!wordsmith::session_for(file, root).format_bar_visible,
+          "nor across the third");
+
+    written.binder_visible     = false;
+    written.inspector_visible  = false;
+    written.format_bar_visible = true;
+    check(wordsmith::save_project_session(written, file, error),
+          "saving the format bar alone succeeds: " + error);
+    check(!wordsmith::session_for(file, root).binder_visible,
+          "the binder stays dismissed while the bar is shown");
+    check(!wordsmith::session_for(file, root).inspector_visible,
+          "and so does the inspector");
+    check(wordsmith::session_for(file, root).format_bar_visible,
+          "and the format bar is the one that comes back");
 
     /* An entry written before the fields existed, and one whose values someone
      * hand-edited into the wrong type. Neither may put a pane away. */
@@ -203,15 +231,20 @@ void test_the_panes_are_remembered()
           "an entry without the fields shows the binder");
     check(wordsmith::session_for(older, root).inspector_visible,
           "an entry without the fields shows the inspector");
+    check(wordsmith::session_for(older, root).format_bar_visible,
+          "an entry without the fields shows the format bar");
 
     const fs::path wrong_type = temp.path() / "wrong-type.json";
     write_file(wrong_type, "{\"projects\": [{\"root\": \"" + root.string() +
                                "\", \"binder-visible\": 0, "
-                               "\"inspector-visible\": \"no\"}]}\n");
+                               "\"inspector-visible\": \"no\", "
+                               "\"format-bar-visible\": null}]}\n");
     check(wordsmith::session_for(wrong_type, root).binder_visible,
           "a number reads as the default rather than as false");
     check(wordsmith::session_for(wrong_type, root).inspector_visible,
           "a string reads as the default rather than as false");
+    check(wordsmith::session_for(wrong_type, root).format_bar_visible,
+          "and a null reads as the default too");
 }
 
 /* Two projects are two entries, and neither disturbs the other. */

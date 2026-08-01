@@ -66,6 +66,7 @@ target_sources(wordsmith-ui PRIVATE
     project-actions.c
     binder-panel.c
     editor-panel.c
+    format-bar.c
     inspector-panel.c
     text-scale.c
 )

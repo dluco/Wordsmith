@@ -68,16 +68,17 @@ inline constexpr std::size_t SESSION_PROJECT_LIMIT = 50;
  *  `expanded` are relative to `root`, spelled with '/' separators;
  *  `open_document` is empty when no document was open.
  *
- *  The pane flags default to true, which is both where the panes start and what
- *  an entry written by a build that predates the field reads as. The default
- *  has to be the visible one either way: a missing key must not put a pane away
- *  that the author never asked to lose. */
+ *  The visibility flags default to true, which is both where each piece of
+ *  furniture starts and what an entry written by a build that predates the
+ *  field reads as. The default has to be the visible one either way: a missing
+ *  key must not put away something the author never asked to lose. */
 struct ProjectSession {
     std::string              root;
     std::string              open_document;
     std::vector<std::string> expanded;
     bool                     binder_visible = true;
     bool                     inspector_visible = true;
+    bool                     format_bar_visible = true;
 };
 
 /** Where the session file lives. The file, and the directory holding it, need

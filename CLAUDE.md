@@ -162,17 +162,18 @@ That is the `children:` contract again: what is written down can only reopen
 what the scan already found. A document deleted outside Wordsmith opens nothing
 instead of raising an error on launch.
 
-`binder-visible` and `inspector-visible` are the remembered things that are not
-paths, so there is no filesystem to check them against and they carry over as
-written. Every way of not saying one — no entry, no key, a hand-edited value of
-the wrong type — defaults to **true**, because a missing answer must never put
-away a pane the author did not ask to lose. Anything non-path added here
-inherits that rule: pick the default that costs nothing when it is wrong.
+`binder-visible`, `inspector-visible` and `format-bar-visible` are the
+remembered things that are not paths, so there is no filesystem to check them
+against and they carry over as written. Every way of not saying one — no entry,
+no key, a hand-edited value of the wrong type — defaults to **true**, because a
+missing answer must never put away something the author did not ask to lose.
+Anything non-path added here inherits that rule: pick the default that costs
+nothing when it is wrong.
 
-They cross the C bridge as a `WordsmithSessionPanes` struct rather than as two
-`int` parameters. Two adjacent flags of the same type are a swap nothing
-downstream would catch — the author would just find the wrong pane missing —
-and the test writes one of each, both ways round, for that reason.
+They cross the C bridge as a `WordsmithSessionPanes` struct rather than as three
+`int` parameters. Adjacent flags of the same type are a swap nothing downstream
+would catch — the author would just find the wrong thing missing — and the test
+writes one shown per round, each round a different one, for that reason.
 
 The UI side lives in `ui-state.c`: `ui_state_remember_session()` starts a
 one-second timer so a run of expander clicks costs one write,
@@ -233,8 +234,9 @@ line, markers normalise), but it reaches a fixed point after one pass.
 
 ### Composition mode
 
-The manuscript alone, full screen: both side panes and the menu bar go away, the
-window goes full screen, and the editor draws its text as a centred column.
+The manuscript alone, full screen: both side panes, the format bar and the menu
+bar go away, the window goes full screen, and the editor draws its text as a
+centred column.
 `win.composition-mode` is a stateful toggle on F11, and Escape leaves as well —
 a mode that hides the menu bar has to be escapable without it. Escape goes
 through the action rather than calling `ui-state` directly, so the check mark
@@ -255,27 +257,71 @@ the UI test checks, and it falls back to the ordinary margin whenever the pane
 is too narrow for the column — including the width of 0 before the first
 allocation.
 
-**The panes are hidden underneath the author's answer, never by changing it.**
-The inspector's entry in the session and its check mark both stay where they
-were, and both panes come back the way they were on the way in
-(`binder_shown_before_composing` and its sibling). Two consequences that are
+**What the mode hides is hidden underneath the author's answer, never by
+changing it.** The inspector's entry in the session and its check mark both stay
+where they were, and everything comes back the way it was on the way in
+(`binder_shown_before_composing` and its siblings). Two consequences that are
 easy to get wrong, and did not work until they were handled:
 
-- The `ui_state_set_*_visible()` pair records the new answer without moving the
-  pane while composing. Otherwise restoring a session — Ctrl+O still works with
-  the menu bar hidden — puts a pane on screen in the middle of the mode.
+- The `ui_state_set_*_visible()` trio records the new answer without moving
+  anything while composing. Otherwise restoring a session — Ctrl+O still works
+  with the menu bar hidden — puts a pane on screen in the middle of the mode.
 - `save_session_now()` writes `pane_answers()`, not what the widgets show.
   Reading the widgets would record "dismissed" for anyone who quits from
-  composition mode and lose them both panes for good.
+  composition mode and lose them the lot for good.
 
 Anything else that comes to be hidden by the mode inherits both rules.
+
+### The format bar
+
+Bold, italic and underline above the manuscript, on by default and remembered
+per project like the side panes. **GTK4 has no control for this**: `GtkToolbar`
+and `GtkToolButton` went out with GTK3, `GtkActionBar` is a contextual strip for
+the bottom of a window, and `GtkTextView` ships nothing of its own. A format bar
+in GTK4 is a `GtkBox` with the `.toolbar` style class and ordinary buttons in
+it, which is what `format-bar.c` is; `.format-bar` in the stylesheet is the
+whole of the look.
+
+The buttons only *name* window actions (`win.format-bold`, …), the way the
+binder's context menu names `win.new-text-in`. The bar does not know there is an
+editor, and Ctrl+B, the Format menu and the button are three ways into one verb.
+It sits in a box above the editor rather than across the window, so hiding the
+inspector does not move the buttons.
+
+**The buttons follow the text, never the click.** A press raises the action and
+nothing else; what lights a button is `editor_panel_set_styles_callback()`
+reporting what the text now wears, through `main-window.c` to
+`format_bar_show_styles()`. A press that changes nothing — Bold with no
+selection, which is what the Format menu already does — therefore leaves the
+button where it was rather than lying about the manuscript. `updating` in
+`format-bar.c` is what keeps that report from raising the action again.
+
+`editor_style_flags()` is the display-free seam, and it answers two questions
+with one function because the answer has two jobs. Over a selection it reports
+only a style that covers the whole of it, which is exactly
+`editor_panel_toggle_style()`'s own rule — both go through `tag_covers()`, so a
+lit button always means "click to take this off". With no selection it reports
+the character *behind* the cursor, the one just typed past, falling back to the
+character ahead at the start of a line. `tag_covers()` steps to the tag's next
+toggle rather than walking characters, because this runs on every cursor move
+and the selection may be the whole manuscript.
+
+The bar has no accelerator, deliberately: the pane chords are worth knowing
+because of the rule behind them (the shifted form of the format key sharing the
+letter), and there is no format key whose letter this could borrow.
+
+Not yet, and the natural next thing: with no selection a press does nothing, so
+"turn bold on and start typing" is not there. That needs a pending style at the
+insertion point applied on the next insert, which is a feature of the editor
+rather than of the bar.
 
 ### UI wiring
 
 `WordsmithUiState` is shared per-window state; panels borrow it and never own it.
 Panels do not touch the project themselves — they fire callbacks
-(`BinderSelectFn`, `BinderMoveFn`, `EditorModifiedFn`), `main-window.c` picks the
-verb, and `project-actions.c` holds the verb and any dialog flow. The binder's
+(`BinderSelectFn`, `BinderMoveFn`, `EditorModifiedFn`, `EditorStylesFn`),
+`main-window.c` picks the verb, and `project-actions.c` holds the verb and any
+dialog flow. The binder's
 context menu only *names* window actions (`win.new-text-in`, etc.), which
 `menu-bar.c` installs — that indirection is what keeps the panel from needing to
 know about the window.

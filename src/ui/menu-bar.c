@@ -203,6 +203,12 @@ static void on_show_inspector(GSimpleAction* action, GVariant* value, gpointer u
     ui_state_set_inspector_visible(user, g_variant_get_boolean(value));
 }
 
+static void on_show_format_bar(GSimpleAction* action, GVariant* value, gpointer user)
+{
+    (void) action;
+    ui_state_set_format_bar_visible(user, g_variant_get_boolean(value));
+}
+
 static void on_composition_mode(GSimpleAction* action, GVariant* value, gpointer user)
 {
     g_simple_action_set_state(action, value);
@@ -332,6 +338,12 @@ static const ToggleSpec TOGGLE_ACTIONS[] = {
       "<Control><Shift>b" },
     { "show-inspector", "change-state", G_CALLBACK(on_show_inspector), TRUE,
       "<Control><Shift>i" },
+    /* No chord for the format bar, deliberately. The rule above is what makes
+     * the other two worth knowing, and there is no format key whose letter it
+     * could borrow — an unrelated third chord would cost the pair its rule and
+     * buy one menu item. */
+    { "show-format-bar", "change-state", G_CALLBACK(on_show_format_bar), TRUE,
+      NULL },
     /* F11 is the full-screen key everywhere else, and this is what full screen
      * means in a manuscript editor. Escape leaves as well; see main-window.c. */
     { "composition-mode", "change-state", G_CALLBACK(on_composition_mode), FALSE,
@@ -462,6 +474,7 @@ static GMenuModel* build_menu_model(void)
     GMenu* view_pane_section = g_menu_new();
     g_menu_append(view_pane_section, "Show Binder", "win.show-binder");
     g_menu_append(view_pane_section, "Show Inspector", "win.show-inspector");
+    g_menu_append(view_pane_section, "Show Format Bar", "win.show-format-bar");
     g_menu_append_section(view_menu, NULL, G_MENU_MODEL(view_pane_section));
     g_object_unref(view_pane_section);
 

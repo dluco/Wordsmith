@@ -32,6 +32,7 @@ constexpr const char* OPEN_DOCUMENT_KEY = "open-document";
 constexpr const char* EXPANDED_KEY = "expanded";
 constexpr const char* BINDER_VISIBLE_KEY = "binder-visible";
 constexpr const char* INSPECTOR_VISIBLE_KEY = "inspector-visible";
+constexpr const char* FORMAT_BAR_VISIBLE_KEY = "format-bar-visible";
 
 /* An environment variable's value, or empty when it is unset or blank. XDG
  * treats a set-but-empty variable as unset, and so does this. */
@@ -81,6 +82,7 @@ bool read_entry(const argo::json& value, ProjectSession& out)
     out.open_document = string_field(fields, OPEN_DOCUMENT_KEY);
     out.binder_visible = bool_field(fields, BINDER_VISIBLE_KEY, true);
     out.inspector_visible = bool_field(fields, INSPECTOR_VISIBLE_KEY, true);
+    out.format_bar_visible = bool_field(fields, FORMAT_BAR_VISIBLE_KEY, true);
 
     auto expanded = fields.find(EXPANDED_KEY);
     if (expanded != fields.end() && expanded->second.is_array()) {
@@ -106,6 +108,7 @@ argo::json write_entry(const ProjectSession& session)
         {EXPANDED_KEY, expanded},
         {BINDER_VISIBLE_KEY, argo::json::boolean_value(session.binder_visible)},
         {INSPECTOR_VISIBLE_KEY, argo::json::boolean_value(session.inspector_visible)},
+        {FORMAT_BAR_VISIBLE_KEY, argo::json::boolean_value(session.format_bar_visible)},
     });
 }
 
@@ -223,6 +226,7 @@ ProjectSession session_for(const fs::path& file, const fs::path& root)
          * against and they carry over as written. */
         result.binder_visible = saved.binder_visible;
         result.inspector_visible = saved.inspector_visible;
+        result.format_bar_visible = saved.format_bar_visible;
 
         /* Everything below is a hint about the filesystem, so the filesystem
          * gets the last word. A document that has been deleted or a folder that

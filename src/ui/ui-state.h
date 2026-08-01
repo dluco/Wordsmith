@@ -6,6 +6,7 @@
 
 typedef struct BinderPanel    BinderPanel;
 typedef struct EditorPanel    EditorPanel;
+typedef struct FormatBar      FormatBar;
 typedef struct InspectorPanel InspectorPanel;
 typedef struct MenuBar        MenuBar;
 
@@ -19,6 +20,7 @@ typedef struct WordsmithUiState {
 
     MenuBar*        menu_bar;
     BinderPanel*    binder;
+    FormatBar*      format_bar;
     EditorPanel*    editor;
     InspectorPanel* inspector;
 
@@ -27,10 +29,11 @@ typedef struct WordsmithUiState {
     guint    session_source;
     gboolean restoring_session;
 
-    /* Composition mode, and the panes to put back when it ends. */
+    /* Composition mode, and what to put back when it ends. */
     gboolean composing;
     gboolean binder_shown_before_composing;
     gboolean inspector_shown_before_composing;
+    gboolean format_bar_shown_before_composing;
 } WordsmithUiState;
 
 WordsmithUiState* ui_state_new(void);
@@ -46,27 +49,29 @@ void ui_state_reload_project(WordsmithUiState* state);
 /** Retitle the window from the project, open document and modified flag. */
 void ui_state_update_title(WordsmithUiState* state);
 
-/** Show a side pane, or put it away, and remember it. The View menu's check
- *  mark is moved to match, so these are the one way to change a pane: the menu
- *  items go through them too, rather than the two setting each other.
+/** Show a side pane or the format bar, or put it away, and remember it. The
+ *  View menu's check mark is moved to match, so these are the one way to change
+ *  what is on screen: the menu items go through them too, rather than the two
+ *  setting each other.
  *
  *  Harmless with no project open — there is simply nowhere to write it down,
- *  and the pane comes back visible next launch. */
+ *  and the thing comes back visible next launch. */
 void ui_state_set_binder_visible(WordsmithUiState* state, gboolean visible);
 void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible);
+void ui_state_set_format_bar_visible(WordsmithUiState* state, gboolean visible);
 
 /* Composition mode: the manuscript alone, full screen.
  *
  * It is a mode rather than a preference, so nothing about it is written down —
- * it ends with the sitting. Both side panes and the menu bar go away, and the
- * editor draws its text as a centred column.
+ * it ends with the sitting. Both side panes, the format bar and the menu bar go
+ * away, and the editor draws its text as a centred column.
  *
- * The panes are hidden *underneath* the author's standing answer rather than by
+ * They are hidden *underneath* the author's standing answer rather than by
  * changing it: the inspector's answer stays in the session and its check mark
- * stays where they left it, unreachable behind a hidden menu bar, and both
- * panes come back the way they were on the way out. Composition mode therefore
- * calls the panels directly and never ui_state_set_inspector_visible(), which
- * would write "dismissed" into the session on the way in. */
+ * stays where they left it, unreachable behind a hidden menu bar, and
+ * everything comes back the way it was on the way out. Composition mode
+ * therefore calls the panels directly and never ui_state_set_inspector_visible(),
+ * which would write "dismissed" into the session on the way in. */
 
 /** Enter or leave composition mode. Toggling to the mode already in force does
  *  nothing, so the panes to restore are only ever captured once. */

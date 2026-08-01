@@ -8,8 +8,9 @@ extern "C" {
 #endif
 
 /* Per-project view state: which binder folders were open, which document was
- * being edited, and which side panes were on screen. See session.hpp for where
- * the file lives, and why a project with nothing saved is never an error.
+ * being edited, and which of the window's furniture was on screen. See
+ * session.hpp for where the file lives, and why a project with nothing saved is
+ * never an error.
  *
  * Paths cross this bridge as absolute paths, spelled against the `root` handed
  * in, because that is how the rest of the UI spells them. The relative form
@@ -17,15 +18,18 @@ extern "C" {
 
 typedef struct WordsmithSession WordsmithSession;
 
-/* Which side panes were on screen, in the order they sit in the window.
+/* What was on screen around the manuscript: the two side panes and the format
+ * bar above the editor, in the order they sit in the window.
  *
- * A struct rather than two more parameters on the save call: two adjacent ints
- * of the same type are a swap waiting to happen, and nothing downstream would
- * catch it — the author would just find the wrong pane missing. Naming each one
- * at the call site is worth the eight lines. */
+ * A struct rather than three more parameters on the save call: adjacent ints of
+ * the same type are a swap waiting to happen, and nothing downstream would
+ * catch it — the author would just find the wrong thing missing. Naming each one
+ * at the call site is worth the eight lines, and more so with every field
+ * added. */
 typedef struct WordsmithSessionPanes {
     int binder_visible;
     int inspector_visible;
+    int format_bar_visible;
 } WordsmithSessionPanes;
 
 /** What was last on screen for the project rooted at `root`. Never NULL: a
@@ -43,9 +47,10 @@ const char* wordsmith_session_open_document(const WordsmithSession* session);
 size_t      wordsmith_session_expanded_count(const WordsmithSession* session);
 const char* wordsmith_session_expanded(const WordsmithSession* session, size_t index);
 
-/** Which side panes were on screen. A project nothing was saved for, like one
- *  saved by a build without the fields, answers 1 for both: the panes start on
- *  screen, and a missing answer must not put one away. */
+/** What was on screen around the manuscript. A project nothing was saved for,
+ *  like one saved by a build without the fields, answers 1 for every one of
+ *  them: they all start on screen, and a missing answer must not put one
+ *  away. */
 WordsmithSessionPanes wordsmith_session_panes(const WordsmithSession* session);
 
 /** Record what is on screen for the project rooted at `root`. `open_document`

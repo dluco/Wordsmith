@@ -38,3 +38,19 @@ target_link_libraries(wordsmith-composition-tests PRIVATE
 target_include_directories(wordsmith-composition-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME wordsmith-composition-tests COMMAND wordsmith-composition-tests)
+
+# Headless as well: editor_style_flags() reads a GtkTextBuffer and its tags,
+# both plain objects, which is why the format bar's rule lives outside the
+# widget that draws it.
+add_executable(wordsmith-format-bar-tests
+    test-format-bar.c
+)
+
+target_link_libraries(wordsmith-format-bar-tests PRIVATE
+    wordsmith-ui
+    gtk4_lib
+)
+
+target_include_directories(wordsmith-format-bar-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME wordsmith-format-bar-tests COMMAND wordsmith-format-bar-tests)

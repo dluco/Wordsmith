@@ -2,6 +2,7 @@
 
 #include "binder-panel.h"
 #include "editor-panel.h"
+#include "format-bar.h"
 #include "inspector-panel.h"
 #include "menu-bar.h"
 
@@ -30,6 +31,7 @@ void ui_state_free(WordsmithUiState* state)
 
     menu_bar_free(state->menu_bar);
     binder_panel_free(state->binder);
+    format_bar_free(state->format_bar);
     editor_panel_free(state->editor);
     inspector_panel_free(state->inspector);
 
@@ -58,7 +60,7 @@ static void set_toggle_state(WordsmithUiState* state, const char* name, gboolean
     }
 }
 
-/* Both panes answer the same two questions the same way, and the second one is
+/* All three answer the same two questions the same way, and the second one is
  * the subtle one: while composing, a pane is held off screen whatever the
  * answer is, so a change to it only decides what comes back at the end. Moving
  * the pane here would put it on screen in the middle of the mode — which is
@@ -90,6 +92,19 @@ void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible)
     ui_state_remember_session(state);
 }
 
+void ui_state_set_format_bar_visible(WordsmithUiState* state, gboolean visible)
+{
+    set_toggle_state(state, "show-format-bar", visible);
+
+    if (state->composing) {
+        state->format_bar_shown_before_composing = visible;
+    } else {
+        format_bar_set_visible(state->format_bar, visible);
+    }
+
+    ui_state_remember_session(state);
+}
+
 /* ── composition mode ────────────────────────────────────────────────────── */
 
 void ui_state_set_composition_mode(WordsmithUiState* state, gboolean composing)
@@ -106,14 +121,19 @@ void ui_state_set_composition_mode(WordsmithUiState* state, gboolean composing)
             binder_panel_is_visible(state->binder);
         state->inspector_shown_before_composing =
             inspector_panel_is_visible(state->inspector);
+        state->format_bar_shown_before_composing =
+            format_bar_is_visible(state->format_bar);
 
         binder_panel_set_visible(state->binder, FALSE);
         inspector_panel_set_visible(state->inspector, FALSE);
+        format_bar_set_visible(state->format_bar, FALSE);
     } else {
         binder_panel_set_visible(state->binder,
                                  state->binder_shown_before_composing);
         inspector_panel_set_visible(state->inspector,
                                     state->inspector_shown_before_composing);
+        format_bar_set_visible(state->format_bar,
+                               state->format_bar_shown_before_composing);
     }
 
     editor_panel_set_composition(state->editor, composing);
@@ -137,22 +157,24 @@ gboolean ui_state_in_composition_mode(WordsmithUiState* state)
 
 /* ── session ─────────────────────────────────────────────────────────────── */
 
-/* The author's standing answer about each pane, which is not the same as
- * whether it is on screen: composition mode holds both off screen without
- * changing the answers. Reading the widgets here would write "dismissed" into
- * the session for anyone who quits from composition mode, and lose them both
- * panes. */
+/* The author's standing answer about each pane and the format bar, which is not
+ * the same as whether it is on screen: composition mode holds them all off
+ * screen without changing the answers. Reading the widgets here would write
+ * "dismissed" into the session for anyone who quits from composition mode, and
+ * lose them the lot. */
 static WordsmithSessionPanes pane_answers(WordsmithUiState* state)
 {
     if (state->composing) {
         return (WordsmithSessionPanes){
             .binder_visible = state->binder_shown_before_composing,
             .inspector_visible = state->inspector_shown_before_composing,
+            .format_bar_visible = state->format_bar_shown_before_composing,
         };
     }
     return (WordsmithSessionPanes){
         .binder_visible = binder_panel_is_visible(state->binder),
         .inspector_visible = inspector_panel_is_visible(state->inspector),
+        .format_bar_visible = format_bar_is_visible(state->format_bar),
     };
 }
 
@@ -241,6 +263,7 @@ static void restore_session(WordsmithUiState* state)
     const WordsmithSessionPanes panes = wordsmith_session_panes(session);
     ui_state_set_binder_visible(state, panes.binder_visible);
     ui_state_set_inspector_visible(state, panes.inspector_visible);
+    ui_state_set_format_bar_visible(state, panes.format_bar_visible);
     state->restoring_session = FALSE;
 
     g_strfreev(expanded);
