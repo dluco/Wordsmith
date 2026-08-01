@@ -11,7 +11,43 @@ typedef enum FieldShape {
     FIELD_LINE,       /* one line */
     FIELD_PARAGRAPH,  /* several */
     FIELD_LIST,       /* typed comma-separated, written as a block sequence */
+    FIELD_STATUS,     /* chosen from a list, with a mark for each */
 } FieldShape;
+
+/* The statuses offered, and the mark shown against each.
+ *
+ * The vocabulary is Scrivener's, which is as close to a convention as this
+ * corner of the world has: a manuscript goes to do, in progress, drafted,
+ * revised, final, done. The marks follow it round — a ring that fills as the
+ * work does, amber while it is being written, blue once it is being revised,
+ * and a struck circle at the end.
+ *
+ * The list is not a closed set. Frontmatter is a text file an author may have
+ * written by hand or shared from another tool, so a status this build has never
+ * heard of is kept, shown under its own mark, and offered back: the file is
+ * where the truth lives, and a control that silently dropped a value it did not
+ * recognise would be a control that loses work.
+ *
+ * A NULL `value` is the absence of a status, which on disk is the absence of
+ * the key rather than a status spelled "No Status". */
+static const struct {
+    const char* value;
+    const char* label;
+    const char* icon;
+} STATUSES[] = {
+    { NULL,            "No Status",     "wordsmith-status-none" },
+    { "To Do",         "To Do",         "wordsmith-status-todo" },
+    { "In Progress",   "In Progress",   "wordsmith-status-in-progress" },
+    { "First Draft",   "First Draft",   "wordsmith-status-first-draft" },
+    { "Revised Draft", "Revised Draft", "wordsmith-status-revised-draft" },
+    { "Final Draft",   "Final Draft",   "wordsmith-status-final-draft" },
+    { "Done",          "Done",          "wordsmith-status-done" },
+};
+
+#define STATUS_COUNT (int) (sizeof(STATUSES) / sizeof(STATUSES[0]))
+
+/* The mark for a status the list does not have. */
+#define STATUS_OTHER_ICON "wordsmith-status-other"
 
 /* The fields the inspector can write, in the order it shows them. These are
  * always on show, whether or not the file has them: the pane is where metadata
@@ -24,7 +60,7 @@ static const struct {
 } EDITABLE_FIELDS[] = {
     { "title",    "Title",    FIELD_LINE,      "Untitled" },
     { "synopsis", "Synopsis", FIELD_PARAGRAPH, NULL },
-    { "status",   "Status",   FIELD_LINE,      "No status" },
+    { "status",   "Status",   FIELD_STATUS,    NULL },
     { "tags",     "Tags",     FIELD_LIST,      "Comma-separated" },
 };
 
@@ -133,10 +169,114 @@ static gboolean is_typeable(const WordsmithFrontmatter* frontmatter, const char*
            != WORDSMITH_FRONTMATTER_MAP;
 }
 
+/* ── the status control ──────────────────────────────────────────────────── */
+
+/* Which of STATUSES `value` is, or -1 for one the list does not have. Matching
+ * ignores case, so a hand-written `done` lands on the same row as `Done`
+ * without the file being rewritten to say so. */
+static int status_index_of(const char* value)
+{
+    if (value == NULL || value[0] == '\0') {
+        return 0;
+    }
+    for (int i = 0; i < STATUS_COUNT; i++) {
+        /* Row 0 has no value of its own, so it answers to its label: a file
+         * that does spell out "No Status" means the same thing by it. */
+        const char* known =
+            STATUSES[i].value != NULL ? STATUSES[i].value : STATUSES[i].label;
+        if (g_ascii_strcasecmp(known, value) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static const char* status_icon_for_label(const char* label)
+{
+    for (int i = 0; i < STATUS_COUNT; i++) {
+        if (g_strcmp0(STATUSES[i].label, label) == 0) {
+            return STATUSES[i].icon;
+        }
+    }
+    return STATUS_OTHER_ICON;
+}
+
+static void on_status_setup(GtkSignalListItemFactory* factory, GtkListItem* item,
+                            gpointer user_data)
+{
+    (void) factory;
+    (void) user_data;
+
+    GtkWidget* row   = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget* label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_append(GTK_BOX(row), gtk_image_new());
+    gtk_box_append(GTK_BOX(row), label);
+    gtk_list_item_set_child(item, row);
+}
+
+static void on_status_bind(GtkSignalListItemFactory* factory, GtkListItem* item,
+                           gpointer user_data)
+{
+    (void) factory;
+    (void) user_data;
+
+    GtkStringObject* entry = gtk_list_item_get_item(item);
+    const char*      label = gtk_string_object_get_string(entry);
+
+    GtkWidget* row  = gtk_list_item_get_child(item);
+    GtkWidget* icon = gtk_widget_get_first_child(row);
+    GtkWidget* text = gtk_widget_get_next_sibling(icon);
+
+    gtk_image_set_from_icon_name(GTK_IMAGE(icon), status_icon_for_label(label));
+    gtk_label_set_text(GTK_LABEL(text), label);
+}
+
+/* The rows offered are the standard list, plus whatever the file says when that
+ * is something else — kept at the end under its own mark rather than dropped. */
+static GtkWidget* status_dropdown_new(const char* value)
+{
+    GtkStringList* labels = gtk_string_list_new(NULL);
+    for (int i = 0; i < STATUS_COUNT; i++) {
+        gtk_string_list_append(labels, STATUSES[i].label);
+    }
+
+    int selected = status_index_of(value);
+    if (selected < 0) {
+        gtk_string_list_append(labels, value);
+        selected = STATUS_COUNT;
+    }
+
+    GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(on_status_setup), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(on_status_bind), NULL);
+
+    GtkWidget* dropdown = gtk_drop_down_new(G_LIST_MODEL(labels), NULL);
+    gtk_drop_down_set_factory(GTK_DROP_DOWN(dropdown), factory);
+    g_object_unref(factory);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), (guint) selected);
+    return dropdown;
+}
+
 /* ── writing values ──────────────────────────────────────────────────────── */
 
 static char* field_text(FieldEditor* field)
 {
+    if (field->shape == FIELD_STATUS) {
+        GtkStringObject* chosen =
+            gtk_drop_down_get_selected_item(GTK_DROP_DOWN(field->widget));
+        if (chosen == NULL) {
+            return g_strdup("");
+        }
+        const char* label = gtk_string_object_get_string(chosen);
+        const int   index = status_index_of(label);
+        if (index < 0) {
+            /* The row that came from the file writes back what the file said. */
+            return g_strdup(label);
+        }
+        return g_strdup(STATUSES[index].value != NULL ? STATUSES[index].value : "");
+    }
+
     if (field->shape == FIELD_PARAGRAPH) {
         GtkTextBuffer* buffer =
             gtk_text_view_get_buffer(GTK_TEXT_VIEW(field->widget));
@@ -231,6 +371,16 @@ static void on_field_focus_leave(GtkEventControllerFocus* controller,
     field_commit(user_data);
 }
 
+/* Choosing is the whole gesture for a status: there is nothing further to
+ * confirm, so the choice is the commit. */
+static void on_status_selected(GObject* dropdown, GParamSpec* spec,
+                               gpointer user_data)
+{
+    (void) dropdown;
+    (void) spec;
+    field_commit(user_data);
+}
+
 static void field_editor_free(gpointer data)
 {
     FieldEditor* field = data;
@@ -281,7 +431,13 @@ static void add_field_row(InspectorPanel* inspector, int index, const char* valu
     field->shape     = EDITABLE_FIELDS[index].shape;
     field->loaded    = g_strdup(value);
 
-    if (field->shape == FIELD_PARAGRAPH) {
+    if (field->shape == FIELD_STATUS) {
+        field->widget = status_dropdown_new(value);
+        gtk_widget_add_css_class(field->widget, "inspector-field-status");
+        /* Connected after the row is picked, so setting it up is not a choice. */
+        g_signal_connect(field->widget, "notify::selected",
+                         G_CALLBACK(on_status_selected), field);
+    } else if (field->shape == FIELD_PARAGRAPH) {
         GtkWidget* view = gtk_text_view_new();
         gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
         gtk_text_view_set_top_margin(GTK_TEXT_VIEW(view), 4);
@@ -306,9 +462,11 @@ static void add_field_row(InspectorPanel* inspector, int index, const char* valu
         field->widget = entry;
     }
 
-    GtkEventController* focus = gtk_event_controller_focus_new();
-    g_signal_connect(focus, "leave", G_CALLBACK(on_field_focus_leave), field);
-    gtk_widget_add_controller(field->widget, focus);
+    if (field->shape != FIELD_STATUS) {
+        GtkEventController* focus = gtk_event_controller_focus_new();
+        g_signal_connect(focus, "leave", G_CALLBACK(on_field_focus_leave), field);
+        gtk_widget_add_controller(field->widget, focus);
+    }
 
     g_object_set_data_full(G_OBJECT(field->widget), "inspector-field", field,
                            field_editor_free);

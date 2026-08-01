@@ -11,12 +11,17 @@
  * with --manual-register). Registers the stylesheet and any bundled icons. */
 void wordsmith_resources_register_resource(void);
 
-static void load_stylesheet(void)
+static void load_display_assets(void)
 {
     GdkDisplay* display = gdk_display_get_default();
     if (display == NULL) {
         return;
     }
+
+    /* The bundle carries an icon theme's worth of directories, so the status
+     * marks resolve by name wherever a GtkImage asks for one. */
+    gtk_icon_theme_add_resource_path(gtk_icon_theme_get_for_display(display),
+                                     WORDSMITH_RESOURCE_DIR "/icons");
 
     GtkCssProvider* provider = gtk_css_provider_new();
     gtk_css_provider_load_from_resource(provider, WORDSMITH_RESOURCE_DIR "/style.css");
@@ -32,7 +37,7 @@ static void on_app_startup(GApplication* app, gpointer user_data)
     (void) user_data;
 
     wordsmith_resources_register_resource();
-    load_stylesheet();
+    load_display_assets();
 }
 
 static void on_app_activate(GApplication* app, gpointer user_data)

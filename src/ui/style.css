@@ -44,6 +44,21 @@
     background: none;
 }
 
+/* The status dropdown is a button, so it arrives with a frame the other fields
+ * do not have. Flatten it to match, and let its own :hover do the rest. */
+.inspector-field-status > button {
+    background: none;
+    background-image: none;
+    border: 1px solid transparent;
+    box-shadow: none;
+    padding: 2px 4px;
+    min-height: 0;
+}
+
+.inspector-field-status > button:hover {
+    border-color: alpha(currentColor, 0.20);
+}
+
 .inspector-field-entry:hover,
 .inspector-field-paragraph:hover {
     border-color: alpha(currentColor, 0.20);

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A quarter of the way round. Circumference at r=6 is 37.7. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <circle cx="8" cy="8" r="6" fill="none" stroke="#808080" stroke-opacity="0.35"
+          stroke-width="2"/>
+  <circle cx="8" cy="8" r="6" fill="none" stroke="#e0912f" stroke-width="2"
+          stroke-dasharray="9.4 37.7" stroke-linecap="round"
+          transform="rotate(-90 8 8)"/>
+</svg>

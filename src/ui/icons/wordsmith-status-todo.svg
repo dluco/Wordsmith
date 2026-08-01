@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Planned but not begun: a broken ring, no arc filled in yet. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <circle cx="8" cy="8" r="6" fill="none" stroke="#e0912f" stroke-width="2"
+          stroke-dasharray="2.4 3.3" stroke-linecap="round"/>
+</svg>

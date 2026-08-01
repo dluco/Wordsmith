@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A status this build does not know. It is the file's word, not ours, so it
+     gets a mark of its own rather than being dressed as one of the seven. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <circle cx="8" cy="8" r="6" fill="none" stroke="#808080" stroke-opacity="0.35"
+          stroke-width="2"/>
+  <circle cx="8" cy="8" r="2.6" fill="#8a8a8a"/>
+</svg>

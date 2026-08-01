@@ -18,9 +18,11 @@
  * file holds is shown read-only, spelled as the file spells it — a key we do
  * not recognise is not a key we should hide.
  *
- * Status and tags are plain text for now. Both want a control of their own — a
- * chosen-from list, and tokens that can be dismissed — and both are typed as
- * one line here until they get one; tags is comma-separated meanwhile.
+ * Status is chosen from a list, each entry carrying a mark that shows how far
+ * along the work is. The list is open at the end: a status the file already
+ * holds that this build has never heard of is kept and offered back rather than
+ * dropped. Tags are still typed as one comma-separated line, and still want
+ * tokens that can be dismissed one at a time.
  *
  * The panel does not write anything itself. A committed edit is reported
  * through InspectorCommitFn, because the file behind it may also be open in the

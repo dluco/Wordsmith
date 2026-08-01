@@ -4,11 +4,17 @@
     <file>style.css</file>
   </gresource>
 
-  <!-- Bundled icons go here, laid out as an icon theme so that a
-       gtk_icon_theme_add_resource_path("/io/github/dluco/Wordsmith/icons")
-       makes each file resolvable by name.
-  <gresource prefix="/io/github/dluco/Wordsmith/icons/scalable/actions">
-    <file alias="binder-folder.svg">icons/binder-folder.svg</file>
+  <!-- Bundled icons, laid out as an icon theme so that the
+       gtk_icon_theme_add_resource_path("/io/github/dluco/Wordsmith/icons") in
+       wordsmith-ui.c makes each file resolvable by name. -->
+  <gresource prefix="/io/github/dluco/Wordsmith/icons/scalable/status">
+    <file alias="wordsmith-status-none.svg">icons/wordsmith-status-none.svg</file>
+    <file alias="wordsmith-status-todo.svg">icons/wordsmith-status-todo.svg</file>
+    <file alias="wordsmith-status-in-progress.svg">icons/wordsmith-status-in-progress.svg</file>
+    <file alias="wordsmith-status-first-draft.svg">icons/wordsmith-status-first-draft.svg</file>
+    <file alias="wordsmith-status-revised-draft.svg">icons/wordsmith-status-revised-draft.svg</file>
+    <file alias="wordsmith-status-final-draft.svg">icons/wordsmith-status-final-draft.svg</file>
+    <file alias="wordsmith-status-done.svg">icons/wordsmith-status-done.svg</file>
+    <file alias="wordsmith-status-other.svg">icons/wordsmith-status-other.svg</file>
   </gresource>
-  -->
 </gresources>
