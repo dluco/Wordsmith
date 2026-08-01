@@ -6,6 +6,7 @@ add_library(wordsmith-core STATIC
     project.cpp
     project-c.cpp
     safe-write.cpp
+    snapshots.cpp
     yaml.cpp
     frontmatter.cpp
     frontmatter-c.cpp
@@ -27,6 +28,7 @@ target_sources(wordsmith-core PUBLIC
     project.hpp
     project-c.h
     safe-write.hpp
+    snapshots.hpp
     yaml.hpp
     frontmatter.hpp
     frontmatter-c.h

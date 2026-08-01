@@ -1,6 +1,7 @@
 #include "project.hpp"
 
 #include "safe-write.hpp"
+#include "snapshots.hpp"
 #include "yaml.hpp"
 
 #include <argo/argo.hpp>
@@ -635,6 +636,9 @@ bool read_document(const fs::path& path, std::string& out, std::string& error)
 bool write_document(const fs::path& path, std::string_view markdown,
                     std::string& error)
 {
+    /* Before the write, and deliberately without checking the result: see
+     * `capture_snapshot`, which never blocks the save it precedes. */
+    capture_snapshot(path);
     return write_file_atomically(path, markdown, error);
 }
 

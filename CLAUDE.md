@@ -92,8 +92,28 @@ through it too**. The temp file is a sibling rather than one in `/tmp` because
 
 This guarantees a write lands whole. It does not guarantee the bytes were right
 — editor save is a lossy round trip through `markup.hpp`, so a bug there commits
-a well-formed wrong document. That needs a separate mechanism (keeping the
-previous version), and it does not exist yet.
+a well-formed wrong document. That is what snapshots are for.
+
+### Snapshots
+
+`write_document()` also calls `capture_snapshot()` (`snapshots.cpp`) first,
+copying the previous contents into `.wordsmith/snapshots/` at the project root,
+mirroring the project layout, five per document. `capture_snapshot` **never
+blocks the save it precedes** — every failure and every skip returns false and
+is ignored, because refusing to save the author's words to protect a backup of
+their older words trades a certain loss for a possible one.
+
+Two rules keep the ring useful, and both matter because one inspector
+interaction writes a document several times: identical contents are not stored
+twice, and neither is anything within ten minutes of the newest snapshot.
+Without the cooldown, typing a synopsis would evict every version from before
+the current sitting.
+
+Snapshot filenames are `<UTC stamp>-<counter>.md` and their **lexicographic
+order is the history**: `snapshots()` sorts by name and eviction drops from the
+front. The counter therefore climbs past whatever exists rather than filling the
+gap eviction just made — reusing a freed name reorders history and evicts the
+wrong version next time.
 
 ### Frontmatter: surgical, never lossy
 

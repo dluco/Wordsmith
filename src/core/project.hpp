@@ -203,9 +203,10 @@ bool read_document(const std::filesystem::path& path, std::string& out,
 
 /** Write a document's Markdown, replacing whatever was there.
  *
- *  Atomic: on failure the file on disk is the one that was there before, whole.
- *  See `safe-write.hpp` for what that does and does not cover. Everything that
- *  writes a document or a sidecar goes through here. */
+ *  Atomic, and snapshots the previous contents first — see `safe-write.hpp` and
+ *  `snapshots.hpp` for what each of those does and does not cover. Everything
+ *  that writes a document or a sidecar goes through here, which is what makes
+ *  those two guarantees hold everywhere rather than at most call sites. */
 bool write_document(const std::filesystem::path& path, std::string_view markdown,
                     std::string& error);
 
