@@ -395,8 +395,15 @@ match on return — `session_for()`'s contract again. In the ordinary case, mark
 already at its fixed point, it matches and the history survives.
 
 `editor->applying` is the guard that keeps an undo from being recorded as a
-fresh edit, in the same idiom as `loading`. Applying a style also sets the
-modified flag by hand, since GTK only calls a buffer modified when text moves.
+fresh edit, in the same idiom as `loading`.
+
+`note_style_change()` is a rule the undo work uncovered rather than one it
+needs: **GtkTextBuffer only calls itself modified when text moves**, so changing
+a tag left nothing saying the document wanted saving. Bolding a word and closing
+the project lost the bold, and the title bar never showed the `*`. Everything
+that changes a tag on the author's behalf — the toggle and applying a style
+record — goes through it. Asking for a style with nothing selected does not: it
+changes nothing on disk and is forgotten the moment the cursor leaves.
 
 Metadata records go to `project_actions_apply_metadata_record()` rather than the
 editor: the bytes may be a folder's sidecar, and even for a document they are

@@ -693,6 +693,16 @@ static void notify_styles(EditorPanel* editor)
                             editor->styles_user_data);
 }
 
+/* A style changes tags without moving a character, and GtkTextBuffer only calls
+ * itself modified when text moves. Nothing would otherwise mark the document as
+ * needing a save, so bolding a word and closing the project would lose the
+ * bold and the title bar would never say so. Everything that changes a tag on
+ * the author's behalf says so here. */
+static void note_style_change(EditorPanel* editor)
+{
+    gtk_text_buffer_set_modified(editor->buffer, TRUE);
+}
+
 /* ── recording edits ─────────────────────────────────────────────────────── */
 
 static void notify_history(EditorPanel* editor)
@@ -919,6 +929,7 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
         } else {
             gtk_text_buffer_apply_tag(editor->buffer, tag, &start, &end);
         }
+        note_style_change(editor);
         record_edit(editor, captured);
         /* The selection has its answer written into it; nothing is left over
          * for the next thing typed. */
@@ -948,12 +959,8 @@ void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
                       reverse);
     editor->applying = FALSE;
 
-    /* Applying a style leaves the tags changed without touching a character,
-     * and GtkTextBuffer only calls itself modified when text moves. Saying so
-     * here is what keeps an undone format from being left out of the next
-     * save. */
     if (record->kind == UNDO_STYLE) {
-        gtk_text_buffer_set_modified(editor->buffer, TRUE);
+        note_style_change(editor);
     }
 
     forget_asked_styles(editor);
