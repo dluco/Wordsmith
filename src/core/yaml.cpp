@@ -775,4 +775,110 @@ std::string encode_scalar(std::string_view value, int indent)
     return out;
 }
 
+/* ── surgical rewriting ─────────────────────────────────────────────────── */
+
+namespace {
+
+/* Leading spaces of the line starting at `pos`. */
+int indent_at(std::string_view text, std::size_t pos)
+{
+    int indent = 0;
+    while (pos + static_cast<std::size_t>(indent) < text.size()
+           && text[pos + static_cast<std::size_t>(indent)] == ' ') {
+        ++indent;
+    }
+    return indent;
+}
+
+/* Splice `replacement` over `node`'s value. A bare `key:`, and a value written
+ * on the lines below its key, both leave the range starting flush against the
+ * colon — so the separating space has to come from here. A replacement that
+ * opens its own line brings its own separator and would only gain a trailing
+ * space after the colon. */
+std::string replace_value(std::string_view text, const Node& node,
+                          std::string replacement)
+{
+    std::size_t begin = node.value.begin;
+
+    if (!replacement.empty() && replacement.front() == '\n') {
+        /* Take the space between the colon and the old value with us, or it
+         * would be left dangling at the end of the key's line. */
+        while (begin > 0 && (text[begin - 1] == ' ' || text[begin - 1] == '\t')) {
+            --begin;
+        }
+    } else if (begin > 0 && text[begin - 1] != ' ') {
+        replacement.insert(replacement.begin(), ' ');
+    }
+
+    std::string out(text);
+    out.replace(begin, node.value.end - begin, replacement);
+    return out;
+}
+
+/* `text` with a trailing newline, so an appended entry starts on its own
+ * line. */
+std::string with_final_newline(std::string_view text)
+{
+    std::string out(text);
+    if (!out.empty() && out.back() != '\n') {
+        out += '\n';
+    }
+    return out;
+}
+
+} // namespace
+
+std::string set_field(std::string_view text, std::string_view key,
+                      std::optional<std::string_view> value)
+{
+    const Node  root = parse(text);
+    const Node* node = root.find(key);
+
+    if (node != nullptr) {
+        if (!value) {
+            std::string out(text);
+            out.erase(node->entry.begin, node->entry.size());
+            return out;
+        }
+        return replace_value(text, *node,
+                             encode_scalar(*value, indent_at(text, node->entry.begin)));
+    }
+
+    if (!value) {
+        return std::string(text);
+    }
+    return with_final_newline(text) + std::string(key) + ": "
+         + encode_scalar(*value, 0) + "\n";
+}
+
+std::string set_sequence(std::string_view text, std::string_view key,
+                         const std::vector<std::string>& items)
+{
+    const Node  root = parse(text);
+    const Node* node = root.find(key);
+
+    const int indent = node != nullptr ? indent_at(text, node->entry.begin) : 0;
+    const std::string pad(static_cast<std::size_t>(indent) + 2, ' ');
+
+    std::string encoded;
+    if (items.empty()) {
+        encoded = "[]";
+    } else {
+        for (const std::string& item : items) {
+            encoded += '\n';
+            encoded += pad;
+            encoded += "- ";
+            encoded += encode_scalar(item, indent + 2);
+        }
+    }
+
+    if (node != nullptr) {
+        return replace_value(text, *node, encoded);
+    }
+    /* Appending: the encoding above opens with a newline for the block form,
+     * which is exactly what a fresh `key:` wants after it. */
+    return with_final_newline(text) + std::string(key) + ":"
+         + (items.empty() ? " " + encoded : encoded) + "\n";
+}
+
 } // namespace wordsmith::yaml

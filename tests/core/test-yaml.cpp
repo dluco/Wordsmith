@@ -274,6 +274,92 @@ void test_encode_round_trip()
     check_round_trip("# not a comment", "leading hash");
 }
 
+/* ── surgical rewriting on a bare document ──────────────────────────────── */
+
+void test_set_field_on_bare_yaml()
+{
+    check_equal(wordsmith::yaml::set_field("title: Old\nstatus: draft\n", "title",
+                                           "New"),
+                "title: New\nstatus: draft\n", "set: replaces in place");
+
+    check_equal(wordsmith::yaml::set_field("# a note\ntitle: Old   # keep\n", "title",
+                                           "New"),
+                "# a note\ntitle: New   # keep\n", "set: comments survive");
+
+    check_equal(wordsmith::yaml::set_field("title: x\n", "status", "draft"),
+                "title: x\nstatus: draft\n", "set: a new key is appended");
+
+    check_equal(wordsmith::yaml::set_field("", "title", "New"), "title: New\n",
+                "set: an empty document gains its first key");
+
+    check_equal(wordsmith::yaml::set_field("title: x", "status", "draft"),
+                "title: x\nstatus: draft\n",
+                "set: a missing final newline does not join two keys");
+
+    check_equal(wordsmith::yaml::set_field("title: x\nstatus: draft\n", "title",
+                                           std::nullopt),
+                "status: draft\n", "set: erasing removes the entry");
+}
+
+void test_set_sequence()
+{
+    check_equal(wordsmith::yaml::set_sequence("children:\n  - a.md\n  - b.md\n",
+                                              "children", { "b.md", "a.md" }),
+                "children:\n  - b.md\n  - a.md\n", "sequence: reorders in place");
+
+    check_equal(wordsmith::yaml::set_sequence("synopsis: A part.\n", "children",
+                                              { "a.md", "b.md" }),
+                "synopsis: A part.\nchildren:\n  - a.md\n  - b.md\n",
+                "sequence: appended when the key is new");
+
+    check_equal(wordsmith::yaml::set_sequence(
+                    "children:\n  - a.md\nsynopsis: A part.\n", "children",
+                    { "a.md", "b.md", "c.md" }),
+                "children:\n  - a.md\n  - b.md\n  - c.md\nsynopsis: A part.\n",
+                "sequence: growing does not disturb the key after it");
+
+    check_equal(wordsmith::yaml::set_sequence("children:\n  - a.md\n  - b.md\n",
+                                              "children", {}),
+                "children: []\n", "sequence: an empty list is explicit");
+
+    check_equal(wordsmith::yaml::set_sequence("children: []\n", "children",
+                                              { "a.md" }),
+                "children:\n  - a.md\n", "sequence: grows out of the empty form");
+
+    /* Replacing a scalar with a list, and the reverse, both go through the
+     * same value range. */
+    check_equal(wordsmith::yaml::set_sequence("children: solo.md\n", "children",
+                                              { "a.md", "b.md" }),
+                "children:\n  - a.md\n  - b.md\n",
+                "sequence: replaces a scalar value");
+    check_equal(wordsmith::yaml::set_field("children:\n  - a.md\n  - b.md\n",
+                                           "children", "solo.md"),
+                "children: solo.md\n", "sequence: a scalar replaces the whole list");
+}
+
+void test_sequence_round_trip()
+{
+    const std::vector<std::string> items = {
+        "chapter-one.md", "a file with spaces.md", "42.md", "- odd.md", "notes",
+    };
+    const std::string text =
+        wordsmith::yaml::set_sequence("synopsis: x\n", "children", items);
+
+    const Node  root = wordsmith::yaml::parse(text);
+    const Node* children = root.find("children");
+    check(children != nullptr && children->is_sequence()
+              && children->seq.size() == items.size(),
+          "sequence round trip: reads back with every item");
+    if (children != nullptr && children->seq.size() == items.size()) {
+        for (std::size_t i = 0; i < items.size(); i++) {
+            check_equal(children->seq[i].scalar, items[i],
+                        "sequence round trip: item " + std::to_string(i));
+        }
+    }
+    check_equal(scalar_of(root, "synopsis"), "x",
+                "sequence round trip: the neighbouring key is intact");
+}
+
 } // namespace
 
 int main()
@@ -291,6 +377,9 @@ int main()
     test_diagnostics();
     test_encode_scalar();
     test_encode_round_trip();
+    test_set_field_on_bare_yaml();
+    test_set_sequence();
+    test_sequence_round_trip();
 
     if (failures > 0) {
         std::cerr << failures << " yaml check(s) failed\n";

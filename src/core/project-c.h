@@ -82,6 +82,27 @@ int wordsmith_project_move(WordsmithProject* project, const char* source_path,
                             const char* parent_path, char** moved_path,
                             char** error);
 
+/** Create a folder called `name` beside `item_path` and move the item into it.
+ *  `folder_path` and `moved_path`, when non-NULL, receive the new folder and
+ *  the item's new location. */
+int wordsmith_project_group_into_new_folder(WordsmithProject* project,
+                                             const char* item_path,
+                                             const char* name, char** folder_path,
+                                             char** moved_path, char** error);
+
+/* ── folder metadata ────────────────────────────────────────────────────── */
+
+/** Where `folder_path` keeps its sidecar of fields and child order. The file
+ *  need not exist. Caller frees the result with wordsmith_free_string(). */
+char* wordsmith_folder_metadata_path(const char* folder_path);
+
+/** Record the order of a folder's children, named by filename. Leaves the rest
+ *  of the sidecar alone, and creates it if there is none. */
+int wordsmith_project_set_child_order(WordsmithProject* project,
+                                       const char* folder_path,
+                                       const char* const* names, size_t count,
+                                       char** error);
+
 /* ── documents ──────────────────────────────────────────────────────────── */
 
 /** Read a document's Markdown. Caller frees the result with

@@ -31,6 +31,24 @@ inline constexpr const char* PROJECT_FILE_NAME = "project.wordsmith";
 inline constexpr const char* DEFAULT_MANUSCRIPT_FOLDER = "manuscript";
 inline constexpr const char* DOCUMENT_EXTENSION = ".md";
 
+/* A folder's sidecar, sitting inside the folder it describes.
+ *
+ * A document carries its metadata in its own frontmatter, but a folder has no
+ * file to put it in, so it gets one. The sidecar holds the folder's own fields
+ * — synopsis and the rest of the same vocabulary — and a `children:` list
+ * giving the order of its immediate children.
+ *
+ * Ordering lives here, distributed a folder at a time, rather than in one index
+ * at the top of the project. Position is a property of the relationship between
+ * an item and its siblings, not of the item, and a folder *is* the sibling set:
+ * keeping the order inside it means moving a folder carries its ordering along
+ * with it, with no paths anywhere to rewrite and nothing to go stale when the
+ * move happens outside Wordsmith. It also confines a merge conflict to the one
+ * folder two people both reordered.
+ *
+ * The list is a hint, never an authority — see `load_binder`. */
+inline constexpr const char* FOLDER_METADATA_FILE_NAME = "metadata.yaml";
+
 /** One node in the binder tree. Folders carry children; documents do not. */
 struct BinderEntry {
     std::string              name;       // display name: filename stem, or folder name
@@ -44,14 +62,41 @@ struct BinderEntry {
  * Scan `manuscript_root` into a binder tree. The returned entry is a synthetic
  * root standing for the manuscript folder itself.
  *
- * Folders sort before documents, then both by name, case-insensitively. Only
- * `.md` files are included; anything else on disk is ignored rather than shown,
- * so a stray `.DS_Store` or an image folder does not clutter the binder.
+ * Only `.md` files are included; anything else on disk is ignored rather than
+ * shown, so a stray `.DS_Store`, an image folder, or a folder's own
+ * metadata.yaml does not clutter the binder.
+ *
+ * Order comes from each folder's `children:` list, and that list can only ever
+ * reorder what the scan found — it cannot assert that something exists. In
+ * full:
+ *
+ *   1. the directory scan alone decides what is in the binder,
+ *   2. entries named by the list come first, in the list's order,
+ *   3. whatever the list does not mention follows, folders before documents
+ *      and then case-insensitively by name,
+ *   4. names in the list with nothing behind them are ignored.
+ *
+ * So deleting a chapter outside Wordsmith makes it vanish, adding one makes it
+ * appear at the end, and a hand-edited list that has drifted gives a
+ * mis-ordered binder rather than a broken one.
  *
  * This function is the seam described in the file comment. Everything that
  * builds a binder goes through here.
  */
 BinderEntry load_binder(const std::filesystem::path& manuscript_root);
+
+/** Where `folder` keeps its sidecar. The file need not exist. */
+std::filesystem::path folder_metadata_path(const std::filesystem::path& folder);
+
+/** The child order recorded for `folder`, or empty when it records none.
+ *  Entries are filenames as written: `chapter-one.md`, or a bare name for a
+ *  subfolder. */
+std::vector<std::string> read_child_order(const std::filesystem::path& folder);
+
+/** Record `order` as `folder`'s child order, leaving every other field in the
+ *  sidecar untouched. Creates the sidecar if there is none. */
+bool write_child_order(const std::filesystem::path& folder,
+                       const std::vector<std::string>& order, std::string& error);
 
 /** An open project. Construct with `open` or `create`, both of which return
  *  null and fill `error` on failure. */
@@ -93,6 +138,24 @@ public:
     bool create_document(const std::filesystem::path& parent, std::string_view name,
                          std::filesystem::path& created_path,
                          std::string& error) const;
+
+    /** Record the order of `folder`'s children. `folder` must be the manuscript
+     *  folder or one inside it. Does not rescan. */
+    bool set_child_order(const std::filesystem::path& folder,
+                         const std::vector<std::string>& order,
+                         std::string& error) const;
+
+    /** Create a folder called `name` beside `item` and move `item` into it,
+     *  reporting both paths back.
+     *
+     *  Where the parent records an order, the new folder takes the place the
+     *  item held, rather than landing at the end: a group stands where the
+     *  thing it gathered up used to stand. Does not rescan. */
+    bool group_into_new_folder(const std::filesystem::path& item,
+                               std::string_view name,
+                               std::filesystem::path& folder_path,
+                               std::filesystem::path& moved_path,
+                               std::string& error) const;
 
     /** Move `source` into `destination_parent`, keeping its name, and report
      *  where it landed through `moved_path`.

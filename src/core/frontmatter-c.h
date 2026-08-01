@@ -22,6 +22,12 @@ typedef enum {
  *  valid input; a document with no frontmatter yields a handle reporting zero
  *  keys and a body offset of zero. */
 WordsmithFrontmatter* wordsmith_frontmatter_parse(const char* text);
+
+/** Parse `text` as a bare YAML document — a folder's metadata.yaml, which has
+ *  no fences to find — and hand it back through the same accessors. Reports
+ *  no frontmatter present and a body offset of zero, since it is all
+ *  metadata. */
+WordsmithFrontmatter* wordsmith_frontmatter_parse_yaml(const char* text);
 void                  wordsmith_frontmatter_free(WordsmithFrontmatter* frontmatter);
 
 /** Whether a fenced block was found. Distinct from "has keys": an empty block

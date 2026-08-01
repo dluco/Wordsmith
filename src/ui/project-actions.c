@@ -347,22 +347,12 @@ static void create_folder_with_selection_named(WordsmithUiState* state,
     project_actions_save(state);
     char* was_open = g_strdup(editor_panel_path(state->editor));
 
-    char* parent = g_path_get_dirname(item);
     char* folder = NULL;
-    char* error = NULL;
-    if (!wordsmith_project_create_folder(state->project, parent, name, &folder,
-                                          &error)) {
-        ui_state_report_error(state, "Could not create folder", error);
-        g_free(parent);
-        g_free(was_open);
-        return;
-    }
-
     char* moved = NULL;
-    if (!wordsmith_project_move(state->project, item, folder, &moved, &error)) {
-        /* The folder stays: there is no delete verb yet to take it back, and
-         * an empty folder is a smaller surprise than a half-done move. */
-        ui_state_report_error(state, "Could not move the item into the new folder",
+    char* error = NULL;
+    if (!wordsmith_project_group_into_new_folder(state->project, item, name, &folder,
+                                                  &moved, &error)) {
+        ui_state_report_error(state, "Could not gather the item into a new folder",
                               error);
     } else {
         ui_state_reload_project(state);
@@ -379,7 +369,6 @@ static void create_folder_with_selection_named(WordsmithUiState* state,
 
     wordsmith_free_string(moved);
     wordsmith_free_string(folder);
-    g_free(parent);
     g_free(was_open);
 }
 

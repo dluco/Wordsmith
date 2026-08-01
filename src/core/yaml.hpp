@@ -130,6 +130,28 @@ Node parse(std::string_view text, std::size_t base = 0,
  */
 std::string encode_scalar(std::string_view value, int indent);
 
+/* ── surgical rewriting ─────────────────────────────────────────────────── */
+
+/*
+ * Both calls return `text` with one field changed and every other byte kept:
+ * field order, quoting, comments and blank lines all survive, because only the
+ * bytes inside that field's range are replaced. A key that is not there yet is
+ * appended at the end; `set_field` with no value removes the key entirely.
+ *
+ * Setting a key that currently holds a collection replaces the whole of it, and
+ * setting one that holds a scalar to a sequence likewise — the value range
+ * covers whichever it is.
+ */
+
+std::string set_field(std::string_view text, std::string_view key,
+                      std::optional<std::string_view> value);
+
+/** Write `items` as a block sequence under `key`. An empty list is written as
+ *  `[]` rather than a key with nothing under it, so it reads as "deliberately
+ *  none" instead of "unset". */
+std::string set_sequence(std::string_view text, std::string_view key,
+                         const std::vector<std::string>& items);
+
 } // namespace wordsmith::yaml
 
 #endif /* WORDSMITH_YAML_HPP */

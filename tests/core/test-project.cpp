@@ -1,9 +1,11 @@
 #include "core/project.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include <unistd.h>
 
@@ -213,6 +215,113 @@ void test_writes_are_confined_to_the_manuscript()
           "confinement: the manuscript root itself is allowed");
 }
 
+/* The list may only reorder what the scan found. Every check here is really
+ * one clause of that rule. */
+void test_child_order_is_a_hint()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "order: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path made;
+    project->create_document(manuscript, "apple", made, error);
+    project->create_document(manuscript, "banana", made, error);
+    project->create_document(manuscript, "cherry", made, error);
+    project->create_folder(manuscript, "notes", made, error);
+
+    /* Alphabetical, folders first, until something says otherwise. */
+    auto names = [](const wordsmith::BinderEntry& root) {
+        std::string joined;
+        for (const wordsmith::BinderEntry& child : root.children) {
+            joined += (joined.empty() ? "" : ",") + child.name;
+        }
+        return joined;
+    };
+
+    check_equal(names(wordsmith::load_binder(manuscript)),
+                "notes,apple,banana,cherry", "order: alphabetical by default");
+
+    check(project->set_child_order(manuscript,
+                                   { "cherry.md", "notes", "banana.md" }, error),
+          "order: writing succeeds (" + error + ")");
+    check(fs::is_regular_file(manuscript / "metadata.yaml"),
+          "order: the sidecar is written into the folder it describes");
+
+    check_equal(names(wordsmith::load_binder(manuscript)),
+                "cherry,notes,banana,apple",
+                "order: listed items lead, the rest follow alphabetically");
+
+    /* Deleting outside Wordsmith: the entry is stale, and simply ignored. */
+    fs::remove(manuscript / "cherry.md");
+    check_equal(names(wordsmith::load_binder(manuscript)), "notes,banana,apple",
+                "order: a name with nothing behind it is dropped");
+
+    /* Appearing outside Wordsmith: unlisted, so it lands at the end. */
+    std::string ignored;
+    wordsmith::write_document(manuscript / "damson.md", "", ignored);
+    check_equal(names(wordsmith::load_binder(manuscript)),
+                "notes,banana,apple,damson", "order: a new arrival goes last");
+
+    /* Hand-written lists should not have to know about the extension. */
+    project->set_child_order(manuscript, { "damson", "banana" }, error);
+    check_equal(names(wordsmith::load_binder(manuscript)),
+                "damson,banana,notes,apple", "order: a bare name matches a stem");
+
+    check(!project->set_child_order(temp.path(), { "escape" }, error),
+          "order: a folder outside the manuscript is rejected");
+}
+
+void test_child_order_preserves_the_sidecar()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "sidecar: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    const fs::path sidecar = manuscript / "metadata.yaml";
+    wordsmith::write_document(sidecar,
+                              "# How this part hangs together.\n"
+                              "synopsis: |-\n"
+                              "  The voyage out.\n"
+                              "  Everyone is still hopeful.\n"
+                              "status: draft\n",
+                              error);
+
+    check(project->set_child_order(manuscript, { "a.md", "b.md" }, error),
+          "sidecar: order written alongside the fields (" + error + ")");
+
+    std::string text;
+    wordsmith::read_document(sidecar, text, error);
+    check_equal(text,
+                "# How this part hangs together.\n"
+                "synopsis: |-\n"
+                "  The voyage out.\n"
+                "  Everyone is still hopeful.\n"
+                "status: draft\n"
+                "children:\n"
+                "  - a.md\n"
+                "  - b.md\n",
+                "sidecar: the folder's own fields and comments survive");
+
+    check(wordsmith::read_child_order(manuscript).size() == 2,
+          "sidecar: the order reads back");
+
+    project->set_child_order(manuscript, { "b.md" }, error);
+    wordsmith::read_document(sidecar, text, error);
+    check(text.find("The voyage out.") != std::string::npos
+              && text.find("- a.md") == std::string::npos,
+          "sidecar: rewriting the order does not disturb the synopsis");
+}
+
 void test_move_entry()
 {
     TempDir temp;
@@ -266,6 +375,97 @@ void test_move_entry()
           "move: a target outside the manuscript is rejected");
 }
 
+void test_move_maintains_child_order()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "move order: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path chapter;
+    fs::path part;
+    project->create_document(manuscript, "chapter", chapter, error);
+    project->create_document(manuscript, "other", part, error);
+    project->create_folder(manuscript, "part", part, error);
+
+    project->set_child_order(manuscript, { "chapter.md", "other.md", "part" }, error);
+    project->set_child_order(part, {}, error);
+
+    fs::path moved;
+    check(project->move_entry(chapter, part, moved, error),
+          "move order: the move succeeds (" + error + ")");
+
+    const std::vector<std::string> from = wordsmith::read_child_order(manuscript);
+    check(std::find(from.begin(), from.end(), "chapter.md") == from.end(),
+          "move order: the old folder forgets it");
+    check(from.size() == 2, "move order: the other entries stay");
+
+    const std::vector<std::string> to = wordsmith::read_child_order(part);
+    check(to.size() == 1 && to[0] == "chapter.md",
+          "move order: the new folder records it");
+
+    /* A folder recording no order gets none written: moving something in must
+     * not scatter sidecars through folders nobody has arranged. */
+    fs::path plain;
+    project->create_folder(manuscript, "plain", plain, error);
+    fs::path second;
+    project->create_document(manuscript, "second", second, error);
+    project->move_entry(second, plain, moved, error);
+    check(!fs::exists(plain / "metadata.yaml"),
+          "move order: an unarranged folder stays free of a sidecar");
+}
+
+void test_group_into_new_folder()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "group: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path made;
+    project->create_document(manuscript, "one", made, error);
+    project->create_document(manuscript, "two", made, error);
+    project->create_document(manuscript, "three", made, error);
+    project->set_child_order(manuscript, { "one.md", "two.md", "three.md" }, error);
+
+    fs::path folder;
+    fs::path moved;
+    check(project->group_into_new_folder(manuscript / "two.md", "Part Two", folder,
+                                         moved, error),
+          "group: succeeds (" + error + ")");
+    check(fs::is_directory(folder) && folder.filename() == "Part-Two",
+          "group: the folder is created beside the item");
+    check(moved == folder / "two.md" && fs::is_regular_file(moved),
+          "group: the item is inside it");
+
+    /* The group stands where the thing it gathered used to stand. */
+    const std::vector<std::string> order = wordsmith::read_child_order(manuscript);
+    check(order.size() == 3 && order[0] == "one.md" && order[1] == "Part-Two"
+              && order[2] == "three.md",
+          "group: the new folder takes the item's place in the order");
+
+    /* With nothing arranged, nothing is written. */
+    TempDir plain_temp;
+    auto plain = wordsmith::Project::create(plain_temp.path() / "book", "Book", error);
+    plain->create_document(plain->manuscript_path(), "solo", made, error);
+    check(plain->group_into_new_folder(made, "Box", folder, moved, error),
+          "group: succeeds without a sidecar (" + error + ")");
+    check(!fs::exists(plain->manuscript_path() / "metadata.yaml"),
+          "group: an unarranged folder gains no sidecar");
+
+    check(!project->group_into_new_folder(temp.path() / "outside.md", "Box", folder,
+                                          moved, error),
+          "group: an item outside the manuscript is rejected");
+}
+
 void test_document_read_write()
 {
     TempDir temp;
@@ -310,7 +510,11 @@ int main()
     test_binder_ordering_and_filtering();
     test_create_folder_and_document();
     test_writes_are_confined_to_the_manuscript();
+    test_child_order_is_a_hint();
+    test_child_order_preserves_the_sidecar();
     test_move_entry();
+    test_move_maintains_child_order();
+    test_group_into_new_folder();
     test_document_read_write();
     test_sanitize_name();
 

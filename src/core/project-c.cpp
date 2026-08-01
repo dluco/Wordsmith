@@ -251,6 +251,69 @@ int wordsmith_project_move(WordsmithProject* project, const char* source_path,
     return 1;
 }
 
+int wordsmith_project_group_into_new_folder(WordsmithProject* project,
+                                             const char* item_path,
+                                             const char* name, char** folder_path,
+                                             char** moved_path, char** error)
+{
+    if (project == nullptr || item_path == nullptr || name == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path folder;
+    fs::path moved;
+    std::string message;
+    if (!project->project->group_into_new_folder(fs::path(item_path), name, folder,
+                                                 moved, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (folder_path != nullptr) {
+        *folder_path = duplicate(folder.string());
+    }
+    if (moved_path != nullptr) {
+        *moved_path = duplicate(moved.string());
+    }
+    return 1;
+}
+
+/* ── folder metadata ────────────────────────────────────────────────────── */
+
+char* wordsmith_folder_metadata_path(const char* folder_path)
+{
+    if (folder_path == nullptr) {
+        return nullptr;
+    }
+    return duplicate(wordsmith::folder_metadata_path(fs::path(folder_path)).string());
+}
+
+int wordsmith_project_set_child_order(WordsmithProject* project,
+                                       const char* folder_path,
+                                       const char* const* names, size_t count,
+                                       char** error)
+{
+    if (project == nullptr || folder_path == nullptr || (names == nullptr && count > 0)) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    std::vector<std::string> order;
+    order.reserve(count);
+    for (size_t index = 0; index < count; index++) {
+        if (names[index] != nullptr) {
+            order.emplace_back(names[index]);
+        }
+    }
+
+    std::string message;
+    if (!project->project->set_child_order(fs::path(folder_path), order, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    return 1;
+}
+
 /* ── documents ──────────────────────────────────────────────────────────── */
 
 char* wordsmith_document_read(const char* path, char** error)

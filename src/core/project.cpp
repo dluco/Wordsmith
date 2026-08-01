@@ -1,5 +1,7 @@
 #include "project.hpp"
 
+#include "yaml.hpp"
+
 #include <argo/argo.hpp>
 #include <argo/exceptions.hpp>
 
@@ -72,7 +74,104 @@ bool path_is_within(const fs::path& ancestor, const fs::path& candidate)
 
 } // namespace
 
+/* ── folder metadata ────────────────────────────────────────────────────── */
+
+fs::path folder_metadata_path(const fs::path& folder)
+{
+    return folder / FOLDER_METADATA_FILE_NAME;
+}
+
+std::vector<std::string> read_child_order(const fs::path& folder)
+{
+    std::string text;
+    std::string error;
+    if (!read_document(folder_metadata_path(folder), text, error)) {
+        return {};
+    }
+
+    const yaml::Node root = yaml::parse(text);
+    const yaml::Node* children = root.find("children");
+    if (children == nullptr || !children->is_sequence()) {
+        return {};
+    }
+
+    std::vector<std::string> order;
+    order.reserve(children->seq.size());
+    for (const yaml::Node& child : children->seq) {
+        if (!child.scalar.empty()) {
+            order.push_back(child.scalar);
+        }
+    }
+    return order;
+}
+
+bool write_child_order(const fs::path& folder, const std::vector<std::string>& order,
+                       std::string& error)
+{
+    const fs::path path = folder_metadata_path(folder);
+
+    /* Read-modify-write rather than emit: the sidecar holds the folder's
+     * synopsis too, and rewriting only the `children:` range leaves that, its
+     * comments, and its field order exactly as the author left them. */
+    std::string text;
+    std::string ignored;
+    if (!read_document(path, text, ignored)) {
+        text.clear();
+    }
+
+    return write_document(path, yaml::set_sequence(text, "children", order), error);
+}
+
 /* ── binder ─────────────────────────────────────────────────────────────── */
+
+namespace {
+
+/* Reorder `entries` to match `order`, which names them by filename. Anything
+ * `order` does not mention keeps its place at the end, and anything it names
+ * that is not here is dropped: the list reorders reality, it does not assert
+ * it. A bare name also matches a document's stem, so a hand-written
+ * `chapter-one` finds `chapter-one.md`. */
+void apply_child_order(std::vector<BinderEntry>& entries,
+                       const std::vector<std::string>& order)
+{
+    if (order.empty() || entries.empty()) {
+        return;
+    }
+
+    std::vector<BinderEntry> sorted;
+    sorted.reserve(entries.size());
+    std::vector<bool> taken(entries.size(), false);
+
+    for (const std::string& wanted : order) {
+        std::size_t match = entries.size();
+        for (std::size_t index = 0; index < entries.size(); index++) {
+            if (taken[index]) {
+                continue;
+            }
+            const fs::path& path = entries[index].path;
+            if (path.filename().string() == wanted) {
+                match = index;
+                break;
+            }
+            if (match == entries.size() && path.stem().string() == wanted) {
+                match = index;   // keep looking for an exact filename first
+            }
+        }
+        if (match < entries.size()) {
+            sorted.push_back(std::move(entries[match]));
+            taken[match] = true;
+        }
+    }
+
+    for (std::size_t index = 0; index < entries.size(); index++) {
+        if (!taken[index]) {
+            sorted.push_back(std::move(entries[index]));
+        }
+    }
+    entries = std::move(sorted);
+}
+
+} // namespace
 
 BinderEntry load_binder(const fs::path& manuscript_root)
 {
@@ -106,7 +205,10 @@ BinderEntry load_binder(const fs::path& manuscript_root)
         }
     }
 
+    /* Alphabetical first, so that whatever the sidecar does not mention still
+     * lands somewhere predictable. */
     std::sort(root.children.begin(), root.children.end(), binder_order);
+    apply_child_order(root.children, read_child_order(manuscript_root));
     return root;
 }
 
@@ -266,6 +368,107 @@ bool Project::create_folder(const fs::path& parent, std::string_view name,
     return true;
 }
 
+namespace {
+
+/* Both of these leave a folder that records no order alone. A sidecar exists
+ * because someone arranged that folder; creating one just to write down the
+ * position an unlisted item would land in anyway would put a metadata.yaml in
+ * every folder anyone ever moved anything into. */
+bool records_order(const fs::path& folder)
+{
+    std::error_code code;
+    return fs::is_regular_file(folder_metadata_path(folder), code);
+}
+
+void forget_child(const fs::path& folder, const std::string& name)
+{
+    if (!records_order(folder)) {
+        return;
+    }
+    std::vector<std::string> order = read_child_order(folder);
+    const std::size_t before = order.size();
+    order.erase(std::remove(order.begin(), order.end(), name), order.end());
+    if (order.size() != before) {
+        std::string ignored;
+        write_child_order(folder, order, ignored);
+    }
+}
+
+void remember_child(const fs::path& folder, const std::string& name)
+{
+    if (!records_order(folder)) {
+        return;
+    }
+    std::vector<std::string> order = read_child_order(folder);
+    if (std::find(order.begin(), order.end(), name) != order.end()) {
+        return;
+    }
+    order.push_back(name);
+    std::string ignored;
+    write_child_order(folder, order, ignored);
+}
+
+} // namespace
+
+bool Project::set_child_order(const fs::path& folder,
+                              const std::vector<std::string>& order,
+                              std::string& error) const
+{
+    if (!contains(folder)) {
+        error = "folder is outside the manuscript";
+        return false;
+    }
+    std::error_code code;
+    if (!fs::is_directory(folder, code)) {
+        error = "not a folder";
+        return false;
+    }
+    return write_child_order(folder, order, error);
+}
+
+bool Project::group_into_new_folder(const fs::path& item, std::string_view name,
+                                    fs::path& folder_path, fs::path& moved_path,
+                                    std::string& error) const
+{
+    if (!contains(item)) {
+        error = "the item being grouped is outside the manuscript";
+        return false;
+    }
+
+    const fs::path    parent    = item.parent_path();
+    const std::string item_name = item.filename().string();
+
+    /* Note where the item stood before the move takes it out of the list. */
+    const std::vector<std::string> before = read_child_order(parent);
+    const auto at = std::find(before.begin(), before.end(), item_name);
+    const bool  ordered = at != before.end();
+    const std::size_t position =
+        ordered ? static_cast<std::size_t>(std::distance(before.begin(), at)) : 0;
+
+    if (!create_folder(parent, name, folder_path, error)) {
+        return false;
+    }
+    if (!move_entry(item, folder_path, moved_path, error)) {
+        /* The folder stays behind. There is no delete verb to take it back,
+         * and an empty folder is a smaller surprise than a half-done move. */
+        return false;
+    }
+
+    if (ordered) {
+        std::vector<std::string> after = read_child_order(parent);
+        const std::string folder_name = folder_path.filename().string();
+        after.erase(std::remove(after.begin(), after.end(), folder_name), after.end());
+        after.insert(after.begin()
+                         + static_cast<std::ptrdiff_t>(
+                               position < after.size() ? position : after.size()),
+                     folder_name);
+
+        std::string ignored;
+        write_child_order(parent, after, ignored);
+    }
+    return true;
+}
+
 bool Project::move_entry(const fs::path& source, const fs::path& destination_parent,
                          fs::path& moved_path, std::string& error) const
 {
@@ -309,6 +512,16 @@ bool Project::move_entry(const fs::path& source, const fs::path& destination_par
         error = "cannot move " + source.filename().string() + ": " + code.message();
         return false;
     }
+
+    /* Tidiness rather than correctness: an entry left behind in the old folder
+     * is already ignored, and the new folder would append the arrival anyway.
+     * Doing it properly keeps the files saying what is actually there — and
+     * stops an item that comes back later from silently reclaiming its old
+     * position. */
+    const std::string name = source.filename().string();
+    forget_child(source.parent_path(), name);
+    remember_child(destination_parent, name);
+
     moved_path = target;
     return true;
 }

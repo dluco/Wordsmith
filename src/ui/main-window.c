@@ -14,12 +14,17 @@
 #define BINDER_DEFAULT_WIDTH   240
 #define INSPECTOR_DEFAULT_WIDTH 300
 
-/* Clicking a document in the binder opens it; clicking a folder just moves
- * where new items will be created. */
+/* Clicking a document in the binder opens it. Clicking a folder moves where
+ * new items will be created, and shows the folder's own fields: it has no body
+ * to open, but it does have a synopsis of its own. */
 static void on_binder_selected(const char* path, int is_folder, void* user_data)
 {
     WordsmithUiState* state = user_data;
-    if (path == NULL || is_folder) {
+    if (path == NULL) {
+        return;
+    }
+    if (is_folder) {
+        inspector_panel_set_folder(state->inspector, path);
         return;
     }
     project_actions_open_document(state, path);

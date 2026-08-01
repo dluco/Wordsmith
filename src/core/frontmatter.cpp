@@ -112,46 +112,53 @@ Document parse(std::string_view text)
     return document;
 }
 
-std::string set_field(std::string_view text, std::string_view key,
-                      std::optional<std::string_view> value)
+namespace {
+
+/* Rewrite just the YAML region and splice it back between the fences. The
+ * editing itself belongs to the yaml layer — a fenced block and a bare
+ * metadata.yaml want exactly the same surgery — so all this adds is knowing
+ * where the region is, and opening one when there is none. */
+template <typename Rewrite>
+std::string rewrite_region(std::string_view text, bool create_when_absent,
+                           Rewrite rewrite)
 {
-    const Document    document = parse(text);
-    const yaml::Node* node     = document.root.find(key);
+    const Split split = scan(text);
 
-    if (node != nullptr) {
+    if (split.present) {
+        const std::string_view region =
+            text.substr(split.yaml_begin, split.yaml_end - split.yaml_begin);
         std::string out(text);
-        if (!value) {
-            out.erase(node->entry.begin, node->entry.size());
-            return out;
-        }
-
-        std::string replacement =
-            yaml::encode_scalar(*value, indent_at(text, node->entry.begin));
-        /* A bare `key:`, and a value that lives on the lines below its key,
-         * both leave the range starting flush against the colon — so the
-         * separating space has to come from here. */
-        if (node->value.begin > 0 && text[node->value.begin - 1] != ' ') {
-            replacement.insert(replacement.begin(), ' ');
-        }
-        out.replace(node->value.begin, node->value.size(), replacement);
+        out.replace(split.yaml_begin, region.size(), rewrite(region));
         return out;
     }
 
-    if (!value) {
+    if (!create_when_absent) {
         return std::string(text);
     }
 
-    const std::string entry =
-        std::string(key) + ": " + yaml::encode_scalar(*value, 0) + "\n";
-
     std::string out(text);
-    if (document.split.present) {
-        /* Append as the last field, just above the closing fence. */
-        out.insert(document.split.yaml_end, entry);
-    } else {
-        out.insert(document.split.body_begin, "---\n" + entry + "---\n");
-    }
+    out.insert(split.body_begin, "---\n" + rewrite(std::string_view()) + "---\n");
     return out;
+}
+
+} // namespace
+
+std::string set_field(std::string_view text, std::string_view key,
+                      std::optional<std::string_view> value)
+{
+    return rewrite_region(text, /*create_when_absent=*/value.has_value(),
+                          [&](std::string_view region) {
+                              return yaml::set_field(region, key, value);
+                          });
+}
+
+std::string set_sequence(std::string_view text, std::string_view key,
+                         const std::vector<std::string>& items)
+{
+    return rewrite_region(text, /*create_when_absent=*/true,
+                          [&](std::string_view region) {
+                              return yaml::set_sequence(region, key, items);
+                          });
 }
 
 } // namespace wordsmith::frontmatter

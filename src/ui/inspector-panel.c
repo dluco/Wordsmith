@@ -30,6 +30,10 @@ struct InspectorPanel {
     GtkWidget* placeholder;  /* shown when there is nothing to show */
 };
 
+/* Structure, not description: the binder already draws the child order, and
+ * repeating it here as a list of filenames would be noise. */
+#define CHILD_ORDER_KEY "children"
+
 static gboolean is_schema_key(const char* key)
 {
     for (int i = 0; i < SCHEMA_FIELD_COUNT; i++) {
@@ -168,6 +172,69 @@ void inspector_panel_clear(InspectorPanel* inspector)
     show_placeholder(inspector, "Inspector");
 }
 
+/* Fill the pane from parsed metadata, whether it came from a document's
+ * frontmatter or a folder's sidecar. Takes ownership of `frontmatter`. */
+static void render_metadata(InspectorPanel* inspector,
+                            WordsmithFrontmatter* frontmatter,
+                            const char* nothing_to_show,
+                            const char* problems_heading)
+{
+    if (frontmatter == NULL) {
+        inspector_panel_clear(inspector);
+        return;
+    }
+
+    clear_content(inspector);
+
+    const size_t key_count = wordsmith_frontmatter_key_count(frontmatter);
+    const size_t diagnostic_count = wordsmith_frontmatter_diagnostic_count(frontmatter);
+    if (key_count == 0 && diagnostic_count == 0) {
+        show_placeholder(inspector, nothing_to_show);
+        wordsmith_frontmatter_free(frontmatter);
+        return;
+    }
+
+    for (int i = 0; i < SCHEMA_FIELD_COUNT; i++) {
+        char* value = value_text(frontmatter, SCHEMA_FIELDS[i].key);
+        if (value != NULL) {
+            add_row(inspector, SCHEMA_FIELDS[i].label, value);
+            g_free(value);
+        }
+    }
+
+    gboolean heading_shown = FALSE;
+    for (size_t i = 0; i < key_count; i++) {
+        const char* key = wordsmith_frontmatter_key_at(frontmatter, i);
+        if (key == NULL || is_schema_key(key)
+            || g_strcmp0(key, CHILD_ORDER_KEY) == 0) {
+            continue;
+        }
+        if (!heading_shown) {
+            add_heading(inspector, "Other");
+            heading_shown = TRUE;
+        }
+        char* value = value_text(frontmatter, key);
+        add_row(inspector, key, value != NULL ? value : "");
+        g_free(value);
+    }
+
+    if (diagnostic_count > 0) {
+        add_heading(inspector, problems_heading);
+        for (size_t i = 0; i < diagnostic_count; i++) {
+            size_t      line    = 0;
+            const char* message = wordsmith_frontmatter_diagnostic_at(frontmatter, i, &line);
+            char*       where   = g_strdup_printf("Line %zu", line);
+            add_row(inspector, where, message != NULL ? message : "");
+            g_free(where);
+        }
+    }
+
+    wordsmith_frontmatter_free(frontmatter);
+
+    gtk_widget_set_visible(inspector->placeholder, FALSE);
+    gtk_widget_set_visible(inspector->content, TRUE);
+}
+
 void inspector_panel_set_document(InspectorPanel* inspector, const char* path)
 {
     if (inspector == NULL) {
@@ -186,64 +253,47 @@ void inspector_panel_set_document(InspectorPanel* inspector, const char* path)
         return;
     }
 
+    /* An empty block is still a block, and saying so is more useful than an
+     * inspector that just looks broken. */
     WordsmithFrontmatter* frontmatter = wordsmith_frontmatter_parse(text);
+    const char* nothing = frontmatter != NULL
+                              && wordsmith_frontmatter_present(frontmatter)
+                          ? "No fields in this document's frontmatter"
+                          : "This document has no frontmatter";
     wordsmith_free_string(text);
-    if (frontmatter == NULL) {
+
+    render_metadata(inspector, frontmatter, nothing, "Frontmatter problems");
+}
+
+void inspector_panel_set_folder(InspectorPanel* inspector, const char* path)
+{
+    if (inspector == NULL) {
+        return;
+    }
+    if (path == NULL) {
         inspector_panel_clear(inspector);
         return;
     }
 
-    clear_content(inspector);
-
-    const size_t key_count = wordsmith_frontmatter_key_count(frontmatter);
-    if (key_count == 0) {
-        /* An empty block is still a block, and saying so is more useful than
-         * an inspector that looks broken. */
-        show_placeholder(inspector,
-                         wordsmith_frontmatter_present(frontmatter)
-                             ? "No fields in this document's frontmatter"
-                             : "This document has no frontmatter");
-        wordsmith_frontmatter_free(frontmatter);
+    /* A folder has no file of its own to carry frontmatter, so its fields live
+     * in a sidecar beside its contents. Most folders will not have one. */
+    char* sidecar = wordsmith_folder_metadata_path(path);
+    if (sidecar == NULL) {
+        inspector_panel_clear(inspector);
         return;
     }
 
-    for (int i = 0; i < SCHEMA_FIELD_COUNT; i++) {
-        char* value = value_text(frontmatter, SCHEMA_FIELDS[i].key);
-        if (value != NULL) {
-            add_row(inspector, SCHEMA_FIELDS[i].label, value);
-            g_free(value);
-        }
+    char* error = NULL;
+    char* text  = wordsmith_document_read(sidecar, &error);
+    wordsmith_free_string(sidecar);
+    if (text == NULL) {
+        wordsmith_free_string(error);
+        clear_content(inspector);
+        show_placeholder(inspector, "This folder has no metadata");
+        return;
     }
 
-    gboolean heading_shown = FALSE;
-    for (size_t i = 0; i < key_count; i++) {
-        const char* key = wordsmith_frontmatter_key_at(frontmatter, i);
-        if (key == NULL || is_schema_key(key)) {
-            continue;
-        }
-        if (!heading_shown) {
-            add_heading(inspector, "Other");
-            heading_shown = TRUE;
-        }
-        char* value = value_text(frontmatter, key);
-        add_row(inspector, key, value != NULL ? value : "");
-        g_free(value);
-    }
-
-    const size_t diagnostic_count = wordsmith_frontmatter_diagnostic_count(frontmatter);
-    if (diagnostic_count > 0) {
-        add_heading(inspector, "Frontmatter problems");
-        for (size_t i = 0; i < diagnostic_count; i++) {
-            size_t      line    = 0;
-            const char* message = wordsmith_frontmatter_diagnostic_at(frontmatter, i, &line);
-            char*       where   = g_strdup_printf("Line %zu", line);
-            add_row(inspector, where, message != NULL ? message : "");
-            g_free(where);
-        }
-    }
-
-    wordsmith_frontmatter_free(frontmatter);
-
-    gtk_widget_set_visible(inspector->placeholder, FALSE);
-    gtk_widget_set_visible(inspector->content, TRUE);
+    render_metadata(inspector, wordsmith_frontmatter_parse_yaml(text),
+                    "This folder has no metadata", "Metadata problems");
+    wordsmith_free_string(text);
 }

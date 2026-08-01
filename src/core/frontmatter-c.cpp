@@ -54,6 +54,20 @@ WordsmithFrontmatter* wordsmith_frontmatter_parse(const char* text)
     return frontmatter;
 }
 
+WordsmithFrontmatter* wordsmith_frontmatter_parse_yaml(const char* text)
+{
+    auto* frontmatter = new (std::nothrow) WordsmithFrontmatter();
+    if (frontmatter == nullptr) {
+        return nullptr;
+    }
+    frontmatter->doc.root = wordsmith::yaml::parse(
+        text != nullptr ? text : "", 0, &frontmatter->doc.diagnostics);
+    for (const auto& diagnostic : frontmatter->doc.diagnostics) {
+        frontmatter->messages.push_back(diagnostic.message);
+    }
+    return frontmatter;
+}
+
 void wordsmith_frontmatter_free(WordsmithFrontmatter* frontmatter) { delete frontmatter; }
 
 int wordsmith_frontmatter_present(const WordsmithFrontmatter* frontmatter)

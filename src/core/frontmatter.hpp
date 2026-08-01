@@ -86,9 +86,16 @@ Document parse(std::string_view text);
  * that would otherwise be misread as a number, a boolean, or a comment is
  * quoted. Setting a key whose current value is a sequence or a nested mapping
  * replaces the whole of it.
+ *
+ * The surgery itself lives in yaml::set_field; these two only locate the
+ * region between the fences and open one when there is none.
  */
 std::string set_field(std::string_view text, std::string_view key,
                       std::optional<std::string_view> value);
+
+/** As `set_field`, writing a block sequence. */
+std::string set_sequence(std::string_view text, std::string_view key,
+                         const std::vector<std::string>& items);
 
 } // namespace wordsmith::frontmatter
 
