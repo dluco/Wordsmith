@@ -142,49 +142,76 @@ void test_round_trip()
     }
 }
 
-/* The inspector's visibility is the one remembered thing that is not a path,
- * so it has no filesystem to be checked against and every way of not saying it
- * has to mean the same thing: the pane is on screen. */
-void test_the_inspector_is_remembered()
+/* The two pane flags are the remembered things that are not paths, so they have
+ * no filesystem to be checked against and every way of not saying one has to
+ * mean the same thing: the pane is on screen. */
+void test_the_panes_are_remembered()
 {
     TempDir temp;
     const fs::path root = make_project(temp, "novel");
     const fs::path file = temp.path() / "session.json";
 
+    check(wordsmith::ProjectSession().binder_visible,
+          "a session starts with the binder on screen");
     check(wordsmith::ProjectSession().inspector_visible,
           "a session starts with the inspector on screen");
+    check(wordsmith::session_for(temp.path() / "nothing-here.json", root)
+              .binder_visible,
+          "a project nothing was saved for shows the binder");
     check(wordsmith::session_for(temp.path() / "nothing-here.json", root)
               .inspector_visible,
           "a project nothing was saved for shows the inspector");
 
     wordsmith::ProjectSession written;
     written.root              = root.string();
+    written.binder_visible    = false;
     written.inspector_visible = false;
 
     std::string error;
     check(wordsmith::save_project_session(written, file, error),
-          "saving a dismissed inspector succeeds: " + error);
+          "saving two dismissed panes succeeds: " + error);
+    check(!wordsmith::session_for(file, root).binder_visible,
+          "a dismissed binder round-trips");
     check(!wordsmith::session_for(file, root).inspector_visible,
           "a dismissed inspector round-trips");
 
+    /* One of each, which is what catches the two being written or read in the
+     * wrong order — the failure a struct at the C bridge is there to prevent. */
+    written.binder_visible    = false;
     written.inspector_visible = true;
     check(wordsmith::save_project_session(written, file, error),
-          "saving it back succeeds: " + error);
+          "saving one of each succeeds: " + error);
+    check(!wordsmith::session_for(file, root).binder_visible,
+          "the dismissed binder is the one that stays dismissed");
     check(wordsmith::session_for(file, root).inspector_visible,
-          "showing it again round-trips");
+          "the shown inspector is the one that stays shown");
 
-    /* An entry written before the field existed, and one whose value someone
-     * hand-edited into the wrong type. Neither may put the pane away. */
+    written.binder_visible    = true;
+    written.inspector_visible = false;
+    check(wordsmith::save_project_session(written, file, error),
+          "saving the other way round succeeds: " + error);
+    check(wordsmith::session_for(file, root).binder_visible,
+          "and the flags do not trade places");
+    check(!wordsmith::session_for(file, root).inspector_visible,
+          "in either direction");
+
+    /* An entry written before the fields existed, and one whose values someone
+     * hand-edited into the wrong type. Neither may put a pane away. */
     const fs::path older = temp.path() / "older.json";
     write_file(older, "{\"projects\": [{\"root\": \"" + root.string() + "\"}]}\n");
+    check(wordsmith::session_for(older, root).binder_visible,
+          "an entry without the fields shows the binder");
     check(wordsmith::session_for(older, root).inspector_visible,
-          "an entry without the field shows the inspector");
+          "an entry without the fields shows the inspector");
 
     const fs::path wrong_type = temp.path() / "wrong-type.json";
     write_file(wrong_type, "{\"projects\": [{\"root\": \"" + root.string() +
-                               "\", \"inspector-visible\": \"no\"}]}\n");
+                               "\", \"binder-visible\": 0, "
+                               "\"inspector-visible\": \"no\"}]}\n");
+    check(wordsmith::session_for(wrong_type, root).binder_visible,
+          "a number reads as the default rather than as false");
     check(wordsmith::session_for(wrong_type, root).inspector_visible,
-          "a non-boolean value reads as the default rather than as false");
+          "a string reads as the default rather than as false");
 }
 
 /* Two projects are two entries, and neither disturbs the other. */
@@ -472,7 +499,7 @@ int main()
 {
     test_missing_file_gives_nothing();
     test_round_trip();
-    test_the_inspector_is_remembered();
+    test_the_panes_are_remembered();
     test_projects_are_kept_apart();
     test_saving_again_supersedes_and_promotes();
     test_the_key_is_normalised();

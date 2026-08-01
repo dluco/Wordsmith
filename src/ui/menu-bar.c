@@ -189,11 +189,17 @@ static void on_text_size_reset(GSimpleAction* action, GVariant* param, gpointer 
  * taking activate over — as the stub handler does — stops the flip and the
  * mark with it. So the mark and the pane stay in step here by setting the
  * state and acting on the same value. */
+/* Both of these set the state back on their own action, move the pane, and
+ * write the answer into the session — see ui_state_set_binder_visible(). */
+static void on_show_binder(GSimpleAction* action, GVariant* value, gpointer user)
+{
+    (void) action;
+    ui_state_set_binder_visible(user, g_variant_get_boolean(value));
+}
+
 static void on_show_inspector(GSimpleAction* action, GVariant* value, gpointer user)
 {
     (void) action;
-    /* Which sets the state back on this action, moves the pane, and writes the
-     * answer into the session. */
     ui_state_set_inspector_visible(user, g_variant_get_boolean(value));
 }
 
@@ -305,9 +311,10 @@ static const ActionSpec TARGETED_ACTIONS[] = {
  *
  * The signal is part of the spec because a toggle that works and a toggle that
  * does not are wired differently. A working one takes "change-state" and leaves
- * activate to GSimpleAction, which is what flips the state; a stub takes
- * "activate" instead, which stops the flip, so the menu keeps showing the pane
- * as it actually is rather than following a click that did nothing. */
+ * activate to GSimpleAction, which is what flips the state; a stub would take
+ * "activate" instead, which stops the flip, so the menu keeps showing the thing
+ * as it actually is rather than following a click that did nothing. Nothing
+ * here is a stub any more, but the next toggle to be sketched in should be. */
 typedef struct ToggleSpec {
     const char* name;
     const char* signal;
@@ -317,10 +324,12 @@ typedef struct ToggleSpec {
 } ToggleSpec;
 
 static const ToggleSpec TOGGLE_ACTIONS[] = {
-    { "show-binder",    "activate",     G_CALLBACK(on_stub_action),    TRUE, NULL },
-    /* Shift+Ctrl+I sits next to Ctrl+I for italic on purpose: the inspector is
-     * the other thing an author reaches for while their hands are on the
-     * keyboard, and the pair is easier to keep than two unrelated chords. */
+    /* The two pane chords are the shifted form of the format key that shares
+     * their letter — Shift+Ctrl+B beside Ctrl+B for bold, Shift+Ctrl+I beside
+     * Ctrl+I for italic. A pair with a rule behind it is easier to keep than
+     * two unrelated chords. */
+    { "show-binder",    "change-state", G_CALLBACK(on_show_binder),    TRUE,
+      "<Control><Shift>b" },
     { "show-inspector", "change-state", G_CALLBACK(on_show_inspector), TRUE,
       "<Control><Shift>i" },
     /* F11 is the full-screen key everywhere else, and this is what full screen

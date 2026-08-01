@@ -40,25 +40,47 @@ void ui_state_free(WordsmithUiState* state)
 
 /* ── panes ───────────────────────────────────────────────────────────────── */
 
-void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible)
+/* Move a toggle's check mark to match what just happened to its pane.
+ *
+ * The menu item's handler calls into ui_state rather than moving the pane
+ * itself, so a restore from the session moves the mark by the same code a click
+ * does. Setting the state does not emit "change-state", so this does not come
+ * back around through that handler. */
+static void set_toggle_state(WordsmithUiState* state, const char* name, gboolean on)
 {
-    /* The menu item's own handler calls in here rather than doing this itself,
-     * so a restore from the session moves the check mark by the same code that
-     * a click does. Setting the state does not emit "change-state", so this
-     * does not come back around. */
-    GAction* action = state->window != NULL
-        ? g_action_map_lookup_action(G_ACTION_MAP(state->window), "show-inspector")
-        : NULL;
-    if (action != NULL) {
-        g_simple_action_set_state(G_SIMPLE_ACTION(action),
-                                  g_variant_new_boolean(visible));
+    if (state->window == NULL) {
+        return;
     }
 
-    /* While composing, both panes are held off screen whatever the answer is,
-     * so a change to it only decides what comes back at the end. Moving the
-     * pane here would put the inspector on screen in the middle of the mode —
-     * which is what restoring a session does, and Ctrl+O still works with the
-     * menu bar hidden. */
+    GAction* action = g_action_map_lookup_action(G_ACTION_MAP(state->window), name);
+    if (action != NULL) {
+        g_simple_action_set_state(G_SIMPLE_ACTION(action), g_variant_new_boolean(on));
+    }
+}
+
+/* Both panes answer the same two questions the same way, and the second one is
+ * the subtle one: while composing, a pane is held off screen whatever the
+ * answer is, so a change to it only decides what comes back at the end. Moving
+ * the pane here would put it on screen in the middle of the mode — which is
+ * what restoring a session does, and Ctrl+O still works with the menu bar
+ * hidden. */
+void ui_state_set_binder_visible(WordsmithUiState* state, gboolean visible)
+{
+    set_toggle_state(state, "show-binder", visible);
+
+    if (state->composing) {
+        state->binder_shown_before_composing = visible;
+    } else {
+        binder_panel_set_visible(state->binder, visible);
+    }
+
+    ui_state_remember_session(state);
+}
+
+void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible)
+{
+    set_toggle_state(state, "show-inspector", visible);
+
     if (state->composing) {
         state->inspector_shown_before_composing = visible;
     } else {
@@ -115,14 +137,23 @@ gboolean ui_state_in_composition_mode(WordsmithUiState* state)
 
 /* ── session ─────────────────────────────────────────────────────────────── */
 
-/* The author's standing answer about the inspector, which is not the same as
- * whether the pane is on screen: composition mode holds it off screen without
- * changing the answer. Reading the widget here would write "dismissed" into the
- * session for anyone who quits from composition mode, and lose them the pane. */
-static gboolean inspector_answer(WordsmithUiState* state)
+/* The author's standing answer about each pane, which is not the same as
+ * whether it is on screen: composition mode holds both off screen without
+ * changing the answers. Reading the widgets here would write "dismissed" into
+ * the session for anyone who quits from composition mode, and lose them both
+ * panes. */
+static WordsmithSessionPanes pane_answers(WordsmithUiState* state)
 {
-    return state->composing ? state->inspector_shown_before_composing
-                            : inspector_panel_is_visible(state->inspector);
+    if (state->composing) {
+        return (WordsmithSessionPanes){
+            .binder_visible = state->binder_shown_before_composing,
+            .inspector_visible = state->inspector_shown_before_composing,
+        };
+    }
+    return (WordsmithSessionPanes){
+        .binder_visible = binder_panel_is_visible(state->binder),
+        .inspector_visible = inspector_panel_is_visible(state->inspector),
+    };
 }
 
 static void save_session_now(WordsmithUiState* state)
@@ -138,7 +169,7 @@ static void save_session_now(WordsmithUiState* state)
                                 editor_panel_path(state->editor),
                                 (const char* const*) expanded,
                                 g_strv_length(expanded),
-                                inspector_answer(state),
+                                pane_answers(state),
                                 &error)) {
         /* A view that does not come back is not worth a dialog in the author's
          * way, and there is nothing they could do about it if it were. */
@@ -204,11 +235,12 @@ static void restore_session(WordsmithUiState* state)
      * would, so the editor and the inspector follow without being told
      * separately. A NULL path selects nothing. */
     binder_panel_select_path(state->binder, wordsmith_session_open_document(session));
-    /* After the selection, which loads the pane but does not decide whether it
-     * is on screen. The guard keeps this from counting as a change to write
-     * straight back out. */
-    ui_state_set_inspector_visible(
-        state, wordsmith_session_inspector_visible(session));
+    /* After the selection, which loads the inspector but does not decide
+     * whether either pane is on screen. The guard keeps this from counting as a
+     * change to write straight back out. */
+    const WordsmithSessionPanes panes = wordsmith_session_panes(session);
+    ui_state_set_binder_visible(state, panes.binder_visible);
+    ui_state_set_inspector_visible(state, panes.inspector_visible);
     state->restoring_session = FALSE;
 
     g_strfreev(expanded);

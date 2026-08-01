@@ -138,7 +138,7 @@ size is one answer for the whole application, restored before any window exists.
 ### Session state
 
 Which binder folders were twisted open, which document was being edited, and
-whether the inspector was on screen are remembered per project in
+which side panes were on screen are remembered per project in
 `$XDG_STATE_HOME/wordsmith/session.json` (`~/.local/state/...` when that is
 unset). `session.cpp` reads and writes it.
 
@@ -162,12 +162,17 @@ That is the `children:` contract again: what is written down can only reopen
 what the scan already found. A document deleted outside Wordsmith opens nothing
 instead of raising an error on launch.
 
-`inspector-visible` is the one remembered thing that is not a path, so there is
-no filesystem to check it against and it carries over as written. Every way of
-not saying it — no entry, no key, a hand-edited value of the wrong type —
-defaults to **true**, because a missing answer must never put away a pane the
-author did not ask to lose. Anything non-path added here inherits that rule:
-pick the default that costs nothing when it is wrong.
+`binder-visible` and `inspector-visible` are the remembered things that are not
+paths, so there is no filesystem to check them against and they carry over as
+written. Every way of not saying one — no entry, no key, a hand-edited value of
+the wrong type — defaults to **true**, because a missing answer must never put
+away a pane the author did not ask to lose. Anything non-path added here
+inherits that rule: pick the default that costs nothing when it is wrong.
+
+They cross the C bridge as a `WordsmithSessionPanes` struct rather than as two
+`int` parameters. Two adjacent flags of the same type are a swap nothing
+downstream would catch — the author would just find the wrong pane missing —
+and the test writes one of each, both ways round, for that reason.
 
 The UI side lives in `ui-state.c`: `ui_state_remember_session()` starts a
 one-second timer so a run of expander clicks costs one write,
@@ -178,10 +183,12 @@ selection path opens the editor and inspector. `restoring_session` is what keeps
 putting a view back from counting as a change to it. A failed write warns and is
 otherwise ignored; a view that does not come back is not worth a dialog.
 
-`ui_state_set_inspector_visible()` is the only way the inspector is shown or put
-away. The View menu's toggle calls it rather than moving the pane itself, so
-restoring from the session moves the check mark by the same code a click does
-and the two cannot drift apart.
+`ui_state_set_binder_visible()` and `ui_state_set_inspector_visible()` are the
+only ways a side pane is shown or put away. The View menu's toggles call them
+rather than moving the panes themselves, so restoring from the session moves the
+check mark by the same code a click does and the two cannot drift apart. Their
+chords are the shifted form of the format key sharing the letter — Shift+Ctrl+B
+beside Ctrl+B for bold, Shift+Ctrl+I beside Ctrl+I for italic.
 
 `binder_panel_reload()` also carries the expansion across a rebuild, through the
 same two calls. Without it, creating a document would fold the whole binder
@@ -254,12 +261,12 @@ were, and both panes come back the way they were on the way in
 (`binder_shown_before_composing` and its sibling). Two consequences that are
 easy to get wrong, and did not work until they were handled:
 
-- `ui_state_set_inspector_visible()` records the new answer without moving the
+- The `ui_state_set_*_visible()` pair records the new answer without moving the
   pane while composing. Otherwise restoring a session — Ctrl+O still works with
-  the menu bar hidden — puts the inspector on screen in the middle of the mode.
-- `save_session_now()` writes `inspector_answer()`, not
-  `inspector_panel_is_visible()`. Reading the widget would record "dismissed"
-  for anyone who quits from composition mode and lose them the pane for good.
+  the menu bar hidden — puts a pane on screen in the middle of the mode.
+- `save_session_now()` writes `pane_answers()`, not what the widgets show.
+  Reading the widgets would record "dismissed" for anyone who quits from
+  composition mode and lose them both panes for good.
 
 Anything else that comes to be hidden by the mode inherits both rules.
 

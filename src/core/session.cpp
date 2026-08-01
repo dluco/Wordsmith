@@ -30,6 +30,7 @@ constexpr const char* PROJECTS_KEY = "projects";
 constexpr const char* ROOT_KEY = "root";
 constexpr const char* OPEN_DOCUMENT_KEY = "open-document";
 constexpr const char* EXPANDED_KEY = "expanded";
+constexpr const char* BINDER_VISIBLE_KEY = "binder-visible";
 constexpr const char* INSPECTOR_VISIBLE_KEY = "inspector-visible";
 
 /* An environment variable's value, or empty when it is unset or blank. XDG
@@ -78,6 +79,7 @@ bool read_entry(const argo::json& value, ProjectSession& out)
         return false;
     }
     out.open_document = string_field(fields, OPEN_DOCUMENT_KEY);
+    out.binder_visible = bool_field(fields, BINDER_VISIBLE_KEY, true);
     out.inspector_visible = bool_field(fields, INSPECTOR_VISIBLE_KEY, true);
 
     auto expanded = fields.find(EXPANDED_KEY);
@@ -102,6 +104,7 @@ argo::json write_entry(const ProjectSession& session)
         {ROOT_KEY, argo::json::string(session.root)},
         {OPEN_DOCUMENT_KEY, argo::json::string(session.open_document)},
         {EXPANDED_KEY, expanded},
+        {BINDER_VISIBLE_KEY, argo::json::boolean_value(session.binder_visible)},
         {INSPECTOR_VISIBLE_KEY, argo::json::boolean_value(session.inspector_visible)},
     });
 }
@@ -216,8 +219,9 @@ ProjectSession session_for(const fs::path& file, const fs::path& root)
             continue;
         }
 
-        /* Not a claim about the filesystem, so there is nothing to check it
-         * against and it carries over as written. */
+        /* Not claims about the filesystem, so there is nothing to check them
+         * against and they carry over as written. */
+        result.binder_visible = saved.binder_visible;
         result.inspector_visible = saved.inspector_visible;
 
         /* Everything below is a hint about the filesystem, so the filesystem
