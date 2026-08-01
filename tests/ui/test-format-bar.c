@@ -6,7 +6,10 @@
 /* What the format bar shows is editor_style_flags()' answer, so this is where
  * the bar is tested: a GtkTextBuffer and its tags are plain objects, and the
  * two rules the function follows — the whole of a selection, the character
- * behind a bare cursor — are the parts that can be quietly wrong. */
+ * behind a bare cursor — are the parts that can be quietly wrong.
+ *
+ * The other half of the file is the pair of rules underneath typing into a
+ * style that is not in the text yet, which is the same answer read forwards. */
 
 /* The tags in bit order: inline_tags[n] answers for 1 << n, which is the order
  * the WORDSMITH_MARKUP_SPAN_* flags are declared in. The editor builds the same
@@ -198,6 +201,82 @@ static void test_an_empty_buffer_reports_nothing(void)
     fixture_clear(&fixture);
 }
 
+/* With nothing asked for, text takes the styling of the place it lands in.
+ * That is the case that makes carrying on at the end of a bold word work,
+ * where GtkTextBuffer's own rule would hand back plain text. */
+static void test_typed_text_follows_the_text_beside_it(void)
+{
+    g_assert_cmpuint(editor_typed_styles(0, 0, 0), ==, 0);
+    g_assert_cmpuint(editor_typed_styles(WORDSMITH_MARKUP_SPAN_STRONG, 0, 0), ==,
+                     WORDSMITH_MARKUP_SPAN_STRONG);
+
+    const uint32_t both =
+        WORDSMITH_MARKUP_SPAN_STRONG | WORDSMITH_MARKUP_SPAN_EMPHASIS;
+    g_assert_cmpuint(editor_typed_styles(both, 0, 0), ==, both);
+}
+
+/* What was asked for wins, in both directions. The "off" direction is the one
+ * a single word of bits could not express: turning bold off at the end of a
+ * bold word has to beat the bold character behind the cursor. */
+static void test_what_was_asked_for_overrules_it(void)
+{
+    /* Bold asked for where there is none. */
+    g_assert_cmpuint(editor_typed_styles(0, WORDSMITH_MARKUP_SPAN_STRONG,
+                                         WORDSMITH_MARKUP_SPAN_STRONG),
+                     ==, WORDSMITH_MARKUP_SPAN_STRONG);
+
+    /* Bold turned off where the text is bold. */
+    g_assert_cmpuint(editor_typed_styles(WORDSMITH_MARKUP_SPAN_STRONG,
+                                         WORDSMITH_MARKUP_SPAN_STRONG, 0),
+                     ==, 0);
+
+    /* An answer about one style says nothing about the others, which carry on
+     * from the text: italic here is not disturbed by either answer about bold. */
+    g_assert_cmpuint(editor_typed_styles(WORDSMITH_MARKUP_SPAN_EMPHASIS,
+                                         WORDSMITH_MARKUP_SPAN_STRONG,
+                                         WORDSMITH_MARKUP_SPAN_STRONG),
+                     ==,
+                     WORDSMITH_MARKUP_SPAN_EMPHASIS | WORDSMITH_MARKUP_SPAN_STRONG);
+    g_assert_cmpuint(editor_typed_styles(WORDSMITH_MARKUP_SPAN_EMPHASIS,
+                                         WORDSMITH_MARKUP_SPAN_STRONG, 0),
+                     ==, WORDSMITH_MARKUP_SPAN_EMPHASIS);
+
+    /* A stale flag outside the mask is not an answer and changes nothing. */
+    g_assert_cmpuint(editor_typed_styles(0, 0, WORDSMITH_MARKUP_SPAN_STRONG), ==, 0);
+}
+
+/* Pressing Bold means "the other thing from what I am standing in", so the same
+ * press asks for bold in plain text and for the end of it in bold text. */
+static void test_a_press_asks_for_the_other_thing(void)
+{
+    uint32_t mask  = 0;
+    uint32_t flags = 0;
+
+    editor_ask_for_style(WORDSMITH_MARKUP_SPAN_STRONG, 0, &mask, &flags);
+    g_assert_cmpuint(mask, ==, WORDSMITH_MARKUP_SPAN_STRONG);
+    g_assert_cmpuint(editor_typed_styles(0, mask, flags), ==,
+                     WORDSMITH_MARKUP_SPAN_STRONG);
+
+    /* Pressing it again, now that bold is what is in force, puts it back. The
+     * mask keeps the answer: "not bold" is a thing the author has said, not a
+     * thing they have stopped saying. */
+    editor_ask_for_style(WORDSMITH_MARKUP_SPAN_STRONG,
+                         WORDSMITH_MARKUP_SPAN_STRONG, &mask, &flags);
+    g_assert_cmpuint(mask, ==, WORDSMITH_MARKUP_SPAN_STRONG);
+    g_assert_cmpuint(editor_typed_styles(WORDSMITH_MARKUP_SPAN_STRONG, mask, flags),
+                     ==, 0);
+
+    /* A second style stacks beside the first rather than replacing it: Ctrl+B,
+     * Ctrl+I, then type, comes out bold and italic. */
+    editor_ask_for_style(WORDSMITH_MARKUP_SPAN_STRONG, 0, &mask, &flags);
+    editor_ask_for_style(WORDSMITH_MARKUP_SPAN_EMPHASIS, 0, &mask, &flags);
+    g_assert_cmpuint(editor_typed_styles(0, mask, flags), ==,
+                     WORDSMITH_MARKUP_SPAN_STRONG | WORDSMITH_MARKUP_SPAN_EMPHASIS);
+
+    /* Somewhere to put the answer is the one thing it needs. */
+    editor_ask_for_style(WORDSMITH_MARKUP_SPAN_STRONG, 0, NULL, NULL);
+}
+
 int main(int argc, char* argv[])
 {
     g_test_init(&argc, &argv, NULL);
@@ -211,5 +290,11 @@ int main(int argc, char* argv[])
     g_test_add_func("/format-bar/run-to-the-end",
                     test_a_run_to_the_end_of_the_buffer);
     g_test_add_func("/format-bar/empty-buffer", test_an_empty_buffer_reports_nothing);
+    g_test_add_func("/typing/follows-the-text",
+                    test_typed_text_follows_the_text_beside_it);
+    g_test_add_func("/typing/asked-for-overrules",
+                    test_what_was_asked_for_overrules_it);
+    g_test_add_func("/typing/press-asks-for-the-other-thing",
+                    test_a_press_asks_for_the_other_thing);
     return g_test_run();
 }

@@ -290,11 +290,11 @@ inspector does not move the buttons.
 
 **The buttons follow the text, never the click.** A press raises the action and
 nothing else; what lights a button is `editor_panel_set_styles_callback()`
-reporting what the text now wears, through `main-window.c` to
-`format_bar_show_styles()`. A press that changes nothing — Bold with no
-selection, which is what the Format menu already does — therefore leaves the
-button where it was rather than lying about the manuscript. `updating` in
-`format-bar.c` is what keeps that report from raising the action again.
+reporting what is in force where the author stands, through `main-window.c` to
+`format_bar_show_styles()`. A press the editor does nothing with — with no
+document open — therefore leaves the button where it was rather than lying about
+the manuscript. `updating` in `format-bar.c` is what keeps that report from
+raising the action again.
 
 `editor_style_flags()` is the display-free seam, and it answers two questions
 with one function because the answer has two jobs. Over a selection it reports
@@ -310,10 +310,41 @@ The bar has no accelerator, deliberately: the pane chords are worth knowing
 because of the rule behind them (the shifted form of the format key sharing the
 letter), and there is no format key whose letter this could borrow.
 
-Not yet, and the natural next thing: with no selection a press does nothing, so
-"turn bold on and start typing" is not there. That needs a pending style at the
-insertion point applied on the next insert, which is a feature of the editor
-rather than of the bar.
+### Typing into a style
+
+Bold with nothing selected is "turn bold on and start writing", so
+`editor_panel_toggle_style()` has a second half: it sets `asked_mask` and
+`asked_flags` on the panel, and the next text typed comes out wearing them.
+
+Two words rather than one because **off has to be as sayable as on** — Ctrl+B at
+the end of a bold word means stop, and a single set of bits could not tell that
+from having said nothing. `editor_typed_styles()` and `editor_ask_for_style()`
+are the display-free pair the test drives; the panel holds no rule of its own.
+
+The style is asked for **at a place, not for a stretch of time**. Any cursor
+move forgets it (`on_cursor_moved`), so Ctrl+B, a change of mind and a click
+elsewhere leave nothing waiting. The insertion in progress is the one move that
+does not count, since the mark reaches its new home before the text is styled:
+`inserting` is that exception, and it is why the cursor handler and the insert
+handler are not in a fight over the same answer.
+
+Both ends of `insert-text` are connected. The **before** handler reads what the
+spot is wearing while it can still be read, since GTK gives inserted text the
+tags *covering* the spot — a different question, and at the end of a bold word
+the tag stops short, which is exactly where an author carries on typing in bold.
+The **after** handler dresses the landed text, applying the answer and removing
+its opposite, so Ctrl+B inside a bold word stops the bold rather than inheriting
+it.
+
+One exception keeps paste honest: text that arrives already wearing something
+(`range_is_styled()`) is left alone unless the author asked for a style
+themselves. A paste of formatted text keeps its own; a paste of bare text takes
+the styling of where it lands, which is what every other editor does.
+
+Nothing here touches block tags. Typing at the end of a heading still gives text
+without the heading tag, which save reads past — `line_kind()` asks the line's
+first character. That is unchanged, and it is the next thing in this corner
+worth fixing.
 
 ### UI wiring
 

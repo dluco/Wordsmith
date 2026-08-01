@@ -81,12 +81,19 @@ const char* editor_panel_path(EditorPanel* editor);
 
 gboolean editor_panel_is_modified(EditorPanel* editor);
 
-/** Toggle one WORDSMITH_MARKUP_SPAN_* style over the selection. Does nothing
- *  when the selection is empty. */
+/** Toggle one WORDSMITH_MARKUP_SPAN_* style over the selection, or — with
+ *  nothing selected — over whatever is typed next.
+ *
+ *  The second case is what "turn bold on and start writing" is: the style is
+ *  asked for at a place and waits there, so it is forgotten the moment the
+ *  cursor leaves, and the text carries it as soon as any is typed. Both
+ *  directions are sayable, because Ctrl+B at the end of a bold word means stop
+ *  rather than start. Does nothing when no document is open. */
 void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag);
 
-/** The inline styles in force at the cursor, as WORDSMITH_MARKUP_SPAN_* flags.
- *  0 when nothing is open. */
+/** The inline styles in force at the cursor, as WORDSMITH_MARKUP_SPAN_* flags:
+ *  what the text there wears, or what has been asked for and not yet typed
+ *  into. 0 when nothing is open. */
 uint32_t editor_panel_styles_at_cursor(EditorPanel* editor);
 
 /** The styles `buffer` is wearing where the author is standing, given the
@@ -105,6 +112,25 @@ uint32_t editor_panel_styles_at_cursor(EditorPanel* editor);
  *  GtkTextBuffer and its tags are plain objects. */
 uint32_t editor_style_flags(GtkTextBuffer* buffer, GtkTextTag* const* inline_tags,
                             int count);
+
+/* Typing into a style that is not in the text yet. GtkTextBuffer gives inserted
+ * text the tags covering the spot it goes in, which is a different question
+ * from the one an author is asking: at the end of a bold word the tag stops
+ * short, so GTK hands back plain text exactly where they meant to carry on. The
+ * panel therefore dresses every insertion itself, from these two rules. */
+
+/** What text typed at a spot should come out wearing: the styles `beside` it,
+ *  overruled where the author has said otherwise. `asked_mask` is which styles
+ *  they have answered for, `asked_flags` is the answer — an "off" has to be as
+ *  sayable as an "on", which one word of bits could not manage. */
+uint32_t editor_typed_styles(uint32_t beside, uint32_t asked_mask,
+                             uint32_t asked_flags);
+
+/** Fold one more toggle of `span_flag` into that pair, against what is
+ *  `in_force` where the cursor stands: pressing Bold where nothing is bold asks
+ *  for it, and pressing it where everything is asks for the end of it. */
+void editor_ask_for_style(uint32_t span_flag, uint32_t in_force,
+                          uint32_t* asked_mask, uint32_t* asked_flags);
 
 /* Composition mode's side of the editor: the text draws as a column of fixed
  * width in the middle of the pane, however wide the pane has become.

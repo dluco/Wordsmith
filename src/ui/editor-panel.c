@@ -44,11 +44,27 @@ struct EditorPanel {
 
     EditorStylesFn styles_callback;
     void*          styles_user_data;
+
+    /* A style the author has asked for with nothing selected, waiting for
+     * something to be typed into it: `asked_mask` is which styles have an
+     * answer here, `asked_flags` is the answer. Two words rather than one
+     * because "off" has to be sayable — Ctrl+B at the end of a bold word means
+     * stop, and a single set of bits could not tell that from silence.
+     *
+     * It is asked for at a place rather than for a stretch of time, so any
+     * cursor move forgets it, and the text carries it once something has been
+     * typed. `inserting` and `insert_from` are that insertion in progress. */
+    uint32_t asked_mask;
+    uint32_t asked_flags;
+    gboolean inserting;
+    int      insert_from;      /* offset the text landed at */
+    uint32_t insert_styles;    /* what it should come out wearing */
 };
 
 /* Defined with the rest of the styling, but needed by everything that leaves
  * the cursor somewhere new. */
 static void notify_styles(EditorPanel* editor);
+static void forget_asked_styles(EditorPanel* editor);
 
 /* ── tags ────────────────────────────────────────────────────────────────── */
 
@@ -283,6 +299,7 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     editor->loading = FALSE;
 
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), TRUE);
+    forget_asked_styles(editor);
     notify_styles(editor);
     return 1;
 }
@@ -547,6 +564,33 @@ static gboolean tag_covers(const GtkTextIter* start, const GtkTextIter* end,
     return gtk_text_iter_compare(&cursor, end) >= 0;
 }
 
+static uint32_t styles_in_range(const GtkTextIter* start, const GtkTextIter* end,
+                                GtkTextTag* const* inline_tags, int count)
+{
+    uint32_t flags = 0;
+    for (int bit = 0; bit < count; bit++) {
+        if (tag_covers(start, end, inline_tags[bit])) {
+            flags |= 1u << bit;
+        }
+    }
+    return flags;
+}
+
+/* The one character an empty cursor answers for: the one behind it, which the
+ * author has just typed past and would say they are "in". At the start of a
+ * line there is nothing behind — the newline before it belongs to the line
+ * above — so the character ahead answers instead. */
+static void character_beside(const GtkTextIter* at, GtkTextIter* start,
+                             GtkTextIter* end)
+{
+    *start = *at;
+    if (!gtk_text_iter_starts_line(start)) {
+        gtk_text_iter_backward_char(start);
+    }
+    *end = *start;
+    gtk_text_iter_forward_char(end);
+}
+
 uint32_t editor_style_flags(GtkTextBuffer* buffer, GtkTextTag* const* inline_tags,
                             int count)
 {
@@ -557,26 +601,40 @@ uint32_t editor_style_flags(GtkTextBuffer* buffer, GtkTextTag* const* inline_tag
     GtkTextIter start;
     GtkTextIter end;
     if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) {
-        /* The character behind the cursor is the one the author has just typed
-         * past, and the one whose styling they would say they are "in". At the
-         * start of a line there is nothing behind — the newline before it
-         * belongs to the line above — so the character ahead answers instead. */
-        gtk_text_buffer_get_iter_at_mark(buffer, &start,
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_mark(buffer, &at,
                                          gtk_text_buffer_get_insert(buffer));
-        if (!gtk_text_iter_starts_line(&start)) {
-            gtk_text_iter_backward_char(&start);
-        }
-        end = start;
-        gtk_text_iter_forward_char(&end);
+        character_beside(&at, &start, &end);
     }
 
-    uint32_t flags = 0;
-    for (int bit = 0; bit < count; bit++) {
-        if (tag_covers(&start, &end, inline_tags[bit])) {
-            flags |= 1u << bit;
-        }
+    return styles_in_range(&start, &end, inline_tags, count);
+}
+
+uint32_t editor_typed_styles(uint32_t beside, uint32_t asked_mask,
+                             uint32_t asked_flags)
+{
+    return (beside & ~asked_mask) | (asked_flags & asked_mask);
+}
+
+void editor_ask_for_style(uint32_t span_flag, uint32_t in_force,
+                          uint32_t* asked_mask, uint32_t* asked_flags)
+{
+    if (asked_mask == NULL || asked_flags == NULL) {
+        return;
     }
-    return flags;
+
+    *asked_mask |= span_flag;
+    if ((in_force & span_flag) != 0) {
+        *asked_flags &= ~span_flag;
+    } else {
+        *asked_flags |= span_flag;
+    }
+}
+
+static void forget_asked_styles(EditorPanel* editor)
+{
+    editor->asked_mask  = 0;
+    editor->asked_flags = 0;
 }
 
 uint32_t editor_panel_styles_at_cursor(EditorPanel* editor)
@@ -584,7 +642,9 @@ uint32_t editor_panel_styles_at_cursor(EditorPanel* editor)
     if (editor == NULL || editor->path == NULL) {
         return 0;
     }
-    return editor_style_flags(editor->buffer, editor->inline_tags, INLINE_TAG_COUNT);
+    return editor_typed_styles(
+        editor_style_flags(editor->buffer, editor->inline_tags, INLINE_TAG_COUNT),
+        editor->asked_mask, editor->asked_flags);
 }
 
 static void notify_styles(EditorPanel* editor)
@@ -598,35 +658,149 @@ static void notify_styles(EditorPanel* editor)
 
 /* Typing, moving and selecting all move the insertion point, so one signal
  * covers every way the answer changes from the author's side. What this panel
- * does to the tags itself does not move the cursor, and says so directly. */
+ * does to the tags itself does not move the cursor, and says so directly.
+ *
+ * A style asked for with nothing selected is asked for *here*, so leaving takes
+ * it back — otherwise Ctrl+B, a change of mind and a click three paragraphs
+ * away would leave a bold word waiting there. The insertion the author is in
+ * the middle of is the one move that does not count: the mark reaches its new
+ * home before the text is styled, and it is that text they asked for. */
 static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_data)
 {
     (void) buffer;
     (void) spec;
-    notify_styles(user_data);
+
+    EditorPanel* editor = user_data;
+    if (editor->inserting) {
+        return;
+    }
+
+    forget_asked_styles(editor);
+    notify_styles(editor);
 }
 
-void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
+/* Whether any of the inline tags is already somewhere in [from, to).
+ *
+ * Text that arrives wearing something — a paste of formatted text, which GTK
+ * restores tag by tag — is left as it is. Only text that turned up bare takes
+ * the styling of the place it landed in. */
+static gboolean range_is_styled(EditorPanel* editor, int from, int to)
 {
-    const int index = inline_tag_index(span_flag);
-    if (index < 0) {
+    for (int bit = 0; bit < INLINE_TAG_COUNT; bit++) {
+        GtkTextIter start;
+        GtkTextIter end;
+        gtk_text_buffer_get_iter_at_offset(editor->buffer, &start, from);
+        gtk_text_buffer_get_iter_at_offset(editor->buffer, &end, to);
+
+        if (gtk_text_iter_has_tag(&start, editor->inline_tags[bit])) {
+            return TRUE;
+        }
+        if (gtk_text_iter_forward_to_tag_toggle(&start, editor->inline_tags[bit])
+            && gtk_text_iter_compare(&start, &end) < 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* Before the text lands: work out what it should be wearing while the place it
+ * is going still reads as it did. GTK gives inserted text the tags that cover
+ * the spot, which is not the same question — at the end of a bold word the tag
+ * stops short, and that is exactly where an author carries on typing in bold. */
+static void on_text_inserting(GtkTextBuffer* buffer, GtkTextIter* location,
+                              char* text, int length, gpointer user_data)
+{
+    (void) buffer;
+    (void) text;
+    (void) length;
+
+    EditorPanel* editor = user_data;
+    if (editor->loading) {
         return;
     }
 
     GtkTextIter start;
     GtkTextIter end;
-    if (!gtk_text_buffer_get_selection_bounds(editor->buffer, &start, &end)) {
+    character_beside(location, &start, &end);
+
+    editor->insert_styles = editor_typed_styles(
+        styles_in_range(&start, &end, editor->inline_tags, INLINE_TAG_COUNT),
+        editor->asked_mask, editor->asked_flags);
+    editor->insert_from = gtk_text_iter_get_offset(location);
+    editor->inserting   = TRUE;
+}
+
+/* After it lands: dress it. The answer is applied and its opposite removed, so
+ * Ctrl+B in the middle of a bold word stops the bold rather than inheriting it
+ * from either side. */
+static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
+                             char* text, int length, gpointer user_data)
+{
+    (void) text;
+    (void) length;
+
+    EditorPanel* editor = user_data;
+    if (!editor->inserting) {
+        return;
+    }
+    editor->inserting = FALSE;
+
+    const int      from   = editor->insert_from;
+    const int      to     = gtk_text_iter_get_offset(location);
+    const uint32_t styles = editor->insert_styles;
+    /* Whether the author asked for this, which decides whether text that
+     * arrived with styling of its own is overruled. */
+    const gboolean asked = editor->asked_mask != 0;
+    forget_asked_styles(editor);
+
+    if (to > from && (asked || !range_is_styled(editor, from, to))) {
+        for (int bit = 0; bit < INLINE_TAG_COUNT; bit++) {
+            GtkTextIter start;
+            GtkTextIter end;
+            gtk_text_buffer_get_iter_at_offset(buffer, &start, from);
+            gtk_text_buffer_get_iter_at_offset(buffer, &end, to);
+
+            if ((styles & (1u << bit)) != 0) {
+                gtk_text_buffer_apply_tag(buffer, editor->inline_tags[bit], &start,
+                                          &end);
+            } else {
+                gtk_text_buffer_remove_tag(buffer, editor->inline_tags[bit], &start,
+                                           &end);
+            }
+        }
+    }
+
+    notify_styles(editor);
+}
+
+void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
+{
+    const int index = inline_tag_index(span_flag);
+    if (index < 0 || editor->path == NULL) {
         return;
     }
 
-    GtkTextTag* tag = editor->inline_tags[index];
+    GtkTextIter start;
+    GtkTextIter end;
+    if (gtk_text_buffer_get_selection_bounds(editor->buffer, &start, &end)) {
+        GtkTextTag* tag = editor->inline_tags[index];
 
-    /* Toggle off only when the whole selection already carries the tag;
-     * otherwise a mixed selection becomes uniformly styled. */
-    if (tag_covers(&start, &end, tag)) {
-        gtk_text_buffer_remove_tag(editor->buffer, tag, &start, &end);
+        /* Toggle off only when the whole selection already carries the tag;
+         * otherwise a mixed selection becomes uniformly styled. */
+        if (tag_covers(&start, &end, tag)) {
+            gtk_text_buffer_remove_tag(editor->buffer, tag, &start, &end);
+        } else {
+            gtk_text_buffer_apply_tag(editor->buffer, tag, &start, &end);
+        }
+        /* The selection has its answer written into it; nothing is left over
+         * for the next thing typed. */
+        forget_asked_styles(editor);
     } else {
-        gtk_text_buffer_apply_tag(editor->buffer, tag, &start, &end);
+        /* Nothing to style yet, so the answer waits for the text: turn it on
+         * against what is in force here, and the next characters typed come out
+         * wearing it. */
+        editor_ask_for_style(span_flag, editor_panel_styles_at_cursor(editor),
+                             &editor->asked_mask, &editor->asked_flags);
     }
 
     notify_styles(editor);
@@ -751,6 +925,12 @@ EditorPanel* editor_panel_new(void)
                      G_CALLBACK(on_buffer_modified), editor);
     g_signal_connect(editor->buffer, "notify::cursor-position",
                      G_CALLBACK(on_cursor_moved), editor);
+    /* Both ends of the same insertion: one to read the place before the text
+     * covers it, one to style the text once it is there. */
+    g_signal_connect(editor->buffer, "insert-text",
+                     G_CALLBACK(on_text_inserting), editor);
+    g_signal_connect_after(editor->buffer, "insert-text",
+                           G_CALLBACK(on_text_inserted), editor);
 
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "editor-pane");
@@ -806,6 +986,7 @@ void editor_panel_close(EditorPanel* editor)
     g_clear_pointer(&editor->path, g_free);
     g_clear_pointer(&editor->prologue, g_free);
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), FALSE);
+    forget_asked_styles(editor);
     notify_styles(editor);
 }
 

@@ -17,10 +17,12 @@
  * rather than three implementations of it.
  *
  * The buttons follow the text, never the click. A press raises the action and
- * nothing else; what lights the button up is the editor reporting back what the
- * text is now wearing, through format_bar_show_styles(). So a press that
- * changes nothing — Bold with no selection, which is what the Format menu does
- * too — leaves the button where it was rather than lying about the manuscript. */
+ * nothing else; what lights the button up is the editor reporting back what is
+ * in force where the author is standing, through format_bar_show_styles(). With
+ * nothing selected that is a style waiting for the next thing typed, so the
+ * button lights before the text exists — but it is still the editor's answer
+ * being drawn, never the press. A press the editor does nothing with, with no
+ * document open, therefore leaves the button where it was. */
 typedef struct FormatBar FormatBar;
 
 FormatBar* format_bar_new(void);
