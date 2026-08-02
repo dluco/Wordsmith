@@ -29,8 +29,15 @@ typedef struct WordsmithSpellWord {
 
 /** Every word in `text` worth checking, in order. Fills `count`. Returns NULL
  *  when there are none, which is not an error. Free with
- *  wordsmith_spell_words_free(). */
-WordsmithSpellWord* wordsmith_spell_words(const char* text, size_t* count);
+ *  wordsmith_spell_words_free().
+ *
+ *  `extra_word_chars` is what the dictionary allows inside a word, from
+ *  wordsmith_spell_checker_extra_word_chars(); NULL asks for the rules alone,
+ *  which is what a caller with no dictionary open has. See spelling.hpp for
+ *  which of the two wins where they disagree. */
+WordsmithSpellWord* wordsmith_spell_words(const char* text,
+                                          const char* extra_word_chars,
+                                          size_t* count);
 
 void wordsmith_spell_words_free(WordsmithSpellWord* words, size_t count);
 
@@ -51,6 +58,11 @@ int wordsmith_spell_checker_available(const WordsmithSpellChecker* checker);
 
 /** The language that was opened, or "" when none was. Borrowed. */
 const char* wordsmith_spell_checker_language(const WordsmithSpellChecker* checker);
+
+/** The non-letters this dictionary allows inside a word, for handing to
+ *  wordsmith_spell_words(). "" when there is no dictionary. Borrowed. */
+const char* wordsmith_spell_checker_extra_word_chars(
+    const WordsmithSpellChecker* checker);
 
 /** Whether `word` is spelled the way the dictionary spells it. Nonzero — no
  *  mark — whenever there is no dictionary to ask. */

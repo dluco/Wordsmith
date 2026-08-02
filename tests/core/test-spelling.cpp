@@ -49,6 +49,19 @@ std::string words_of(std::string_view text)
     return out;
 }
 
+/* The same, with the dictionary's own list of what may sit inside a word. */
+std::string words_of(std::string_view text, std::string_view extra_word_chars)
+{
+    std::string out;
+    for (const wordsmith::Word& word : wordsmith::words_in(text, extra_word_chars)) {
+        if (!out.empty()) {
+            out += ' ';
+        }
+        out += word.text;
+    }
+    return out;
+}
+
 /* ── what counts as a word ──────────────────────────────────────────────── */
 
 void test_plain_prose()
@@ -203,6 +216,56 @@ void test_accepting_a_word()
     check(checker.knows(invented), "and is known once it has been accepted");
 }
 
+/* ── what the dictionary adds ────────────────────────────────────────────── */
+
+/* A character the dictionary names holds a word together from the inside, the
+ * way an apostrophe does — including one this file has never heard of, which is
+ * the whole point of asking. */
+void test_the_dictionary_can_add_a_word_character()
+{
+    check_equal(words_of("na·ive"), "na ive", "a middle dot breaks a word");
+    check_equal(words_of("na·ive", "·"), "na·ive",
+                "unless the dictionary says it holds one together");
+
+    check_equal(words_of("·quiet·", "·"), "quiet",
+                "and one at either end is still trimmed off");
+}
+
+/* Only ever a break becoming part of a word. Everything this file already has
+ * an opinion about keeps it, and the two that overlap for English are the ones
+ * that would cost the most. */
+void test_the_rules_win_where_they_have_an_opinion()
+{
+    /* English hunspell answers exactly this, and neither half may take. */
+    const std::string english = "0123456789’";
+
+    check_equal(words_of("v2 in 1984", english), "in",
+                "the digits it names are still digits");
+    check_equal(words_of("don’t", english), "don’t",
+                "the typographic apostrophe it names was already inside a word");
+
+    /* Enchant's own header warns the list may be a guess, and this is where a
+     * wrong one costs a red line under an ordinary compound. */
+    check_equal(words_of("well-known", "-"), "well known",
+                "a hyphen breaks a word however loudly it is named");
+    check_equal(words_of("well-known", "0123456789’-"), "well known",
+                "including at the end of the list, where enchant puts it");
+}
+
+/* Nothing installed means no list, and the rules alone are the answer — the
+ * same trade every other call here makes. */
+void test_no_list_is_the_same_as_no_dictionary()
+{
+    check_equal(words_of("don't stop", ""), words_of("don't stop"),
+                "an empty list changes nothing");
+
+    wordsmith::SpellChecker checker;
+    if (!checker.available()) {
+        check(checker.extra_word_chars().empty(),
+              "and without a dictionary there is no list to have");
+    }
+}
+
 } // namespace
 
 int main()
@@ -216,6 +279,9 @@ int main()
     test_offsets_are_characters();
     test_offsets_survive_trimming();
     test_malformed_bytes_do_not_stop_the_pass();
+    test_the_dictionary_can_add_a_word_character();
+    test_the_rules_win_where_they_have_an_opinion();
+    test_no_list_is_the_same_as_no_dictionary();
     test_checker_never_marks_without_a_dictionary();
     test_accepting_a_word();
 

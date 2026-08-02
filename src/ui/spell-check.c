@@ -127,14 +127,20 @@ static void recheck_line(SpellCheck* spelling, int line)
         return;
     }
 
+    /* The dictionary is asked what holds a word together in its own language
+     * before it is asked about any word, so a line is split the way the language
+     * splits it. Nothing is opened that would not have been: this is a line with
+     * text on it, which is a line that was going to be checked. */
+    WordsmithSpellChecker* checker = checker_for(spelling);
+
     size_t              count = 0;
-    WordsmithSpellWord* words = wordsmith_spell_words(text, &count);
+    WordsmithSpellWord* words = wordsmith_spell_words(
+        text, wordsmith_spell_checker_extra_word_chars(checker), &count);
     g_free(text);
     if (words == NULL) {
         return;
     }
 
-    WordsmithSpellChecker* checker = checker_for(spelling);
     const int line_offset = gtk_text_iter_get_offset(&start);
 
     GtkTextIter at_cursor;

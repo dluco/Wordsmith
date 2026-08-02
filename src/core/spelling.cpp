@@ -97,9 +97,35 @@ Kind kind_of(char32_t code)
     return Kind::Letter;
 }
 
+/* Whether the dictionary named this character as one that holds a word
+ * together.
+ *
+ * The hyphen is refused however loudly it is named. Enchant's own header warns
+ * that the list may be a guess, and this is the character where a wrong guess
+ * costs the most: joining "well-known" into one token asks the dictionary about
+ * a compound it almost certainly does not hold, and puts a red line under an
+ * ordinary word. The halves are what a dictionary keeps, so the halves are what
+ * it gets asked. */
+bool named_by_dictionary(std::string_view extra_word_chars, char32_t code)
+{
+    if (code == U'-' || extra_word_chars.empty()) {
+        return false;
+    }
+
+    std::size_t at = 0;
+    while (at < extra_word_chars.size()) {
+        const Decoded step = decode(extra_word_chars, at);
+        if (step.valid && step.code == code) {
+            return true;
+        }
+        at += step.bytes;
+    }
+    return false;
+}
+
 } // namespace
 
-std::vector<Word> words_in(std::string_view text)
+std::vector<Word> words_in(std::string_view text, std::string_view extra_word_chars)
 {
     std::vector<Word> words;
 
@@ -130,7 +156,15 @@ std::vector<Word> words_in(std::string_view text)
 
     while (byte < text.size()) {
         const Decoded step = decode(text, byte);
-        const Kind    kind = step.valid ? kind_of(step.code) : Kind::Break;
+        Kind          kind = step.valid ? kind_of(step.code) : Kind::Break;
+
+        /* Only ever a break becoming an apostrophe: the rules above have the
+         * first word, and the dictionary's list can add a character that holds
+         * a word together but cannot take one away. */
+        if (kind == Kind::Break && step.valid
+            && named_by_dictionary(extra_word_chars, step.code)) {
+            kind = Kind::Apostrophe;
+        }
 
         switch (kind) {
         case Kind::Break:
@@ -236,6 +270,13 @@ SpellChecker::SpellChecker(const std::string& language)
                                                           tag.c_str());
         if (dictionary_->handle != nullptr) {
             language_ = tag;
+            /* Read once, here: it cannot change under an open dictionary, and
+             * the caller asks for it on every line it checks. */
+            const char* extra =
+                enchant_dict_get_extra_word_characters(dictionary_->handle);
+            if (extra != nullptr) {
+                extra_word_chars_ = extra;
+            }
             return;
         }
     }
@@ -249,6 +290,11 @@ bool SpellChecker::available() const
 }
 
 const std::string& SpellChecker::language() const { return language_; }
+
+const std::string& SpellChecker::extra_word_chars() const
+{
+    return extra_word_chars_;
+}
 
 bool SpellChecker::knows(const std::string& word) const
 {

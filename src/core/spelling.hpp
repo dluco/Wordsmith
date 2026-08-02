@@ -60,12 +60,31 @@ struct Word {
  *    - Anything with a digit in it is not offered at all: "1984", "3rd" and
  *      "v2" are not spelling mistakes and no dictionary has an opinion on them.
  *
+ *  `extra_word_chars` is the dictionary's own answer to the same question —
+ *  SpellChecker::extra_word_chars(), which for English is `0123456789’`. Every
+ *  character in it holds a word together from the inside, exactly as an
+ *  apostrophe does, so a language whose words are held together by something
+ *  this file never thought of is read correctly without this file learning it.
+ *
+ *  **The rules above win where they have an opinion.** The dictionary's list is
+ *  advisory — enchant says outright that for some back-ends it is a guess — and
+ *  the two places it overlaps are already answered here: the digits it names
+ *  are still digits, and the hyphen it may name still breaks a word, because a
+ *  guess that joins "well-known" costs a false mark under every ordinary
+ *  compound. What the list can do is add a character that would otherwise have
+ *  broken a word; it cannot take one back.
+ *
+ *  This keeps its own contract in the bargain: the parameter is a string, not a
+ *  dictionary, so every rule here is still checkable on a machine with nothing
+ *  installed.
+ *
  *  A bare URL typed into the manuscript is checked a word at a time, and its
  *  host will be marked. That is left alone on purpose: Markdown links keep
  *  their target out of the editor's buffer entirely, so the case only arises
  *  for a URL an author typed as prose, and the rules above are worth more than
  *  a special case for it. */
-std::vector<Word> words_in(std::string_view text);
+std::vector<Word> words_in(std::string_view text,
+                           std::string_view extra_word_chars = {});
 
 /**
  * The system's dictionary for one language.
@@ -102,6 +121,17 @@ public:
      *  for: `en_GB` may have been answered by `en`. Empty when none was. */
     const std::string& language() const;
 
+    /** The non-letters this dictionary allows inside a word — `0123456789’` for
+     *  English, and a hyphen last when there is one. Empty when there is no
+     *  dictionary to ask.
+     *
+     *  It is here to be handed to words_in(), which is the only thing that
+     *  wants it: the dictionary knows what holds a word together in its own
+     *  language, and hard-coding that here would be this file guessing at
+     *  languages nobody has written it for. Read once when the dictionary is
+     *  opened, since it cannot change under an open one. */
+    const std::string& extra_word_chars() const;
+
     /** Whether `word` is spelled the way the dictionary spells it. True — no
      *  mark — whenever there is no dictionary to ask, or the word is empty. */
     bool knows(const std::string& word) const;
@@ -131,6 +161,7 @@ private:
     struct Dictionary;
     std::unique_ptr<Dictionary> dictionary_;
     std::string                 language_;
+    std::string                 extra_word_chars_;
 };
 
 } // namespace wordsmith

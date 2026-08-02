@@ -28,7 +28,9 @@ struct WordsmithSpellChecker {
     wordsmith::SpellChecker checker;
 };
 
-WordsmithSpellWord* wordsmith_spell_words(const char* text, size_t* count)
+WordsmithSpellWord* wordsmith_spell_words(const char* text,
+                                          const char* extra_word_chars,
+                                          size_t* count)
 {
     if (count != nullptr) {
         *count = 0;
@@ -37,7 +39,8 @@ WordsmithSpellWord* wordsmith_spell_words(const char* text, size_t* count)
         return nullptr;
     }
 
-    const std::vector<wordsmith::Word> found = wordsmith::words_in(text);
+    const std::vector<wordsmith::Word> found = wordsmith::words_in(
+        text, extra_word_chars != nullptr ? extra_word_chars : "");
     if (found.empty()) {
         return nullptr;
     }
@@ -95,6 +98,12 @@ int wordsmith_spell_checker_available(const WordsmithSpellChecker* checker)
 const char* wordsmith_spell_checker_language(const WordsmithSpellChecker* checker)
 {
     return checker != nullptr ? checker->checker.language().c_str() : "";
+}
+
+const char* wordsmith_spell_checker_extra_word_chars(
+    const WordsmithSpellChecker* checker)
+{
+    return checker != nullptr ? checker->checker.extra_word_chars().c_str() : "";
 }
 
 int wordsmith_spell_checker_knows(const WordsmithSpellChecker* checker,

@@ -372,6 +372,23 @@ arguing about — an apostrophe holds `don't` together, a hyphen breaks
 `well-known`, an em dash is not a hyphen, anything with a digit in it is not
 offered — be tested on a machine with no dictionary installed.
 
+It does take the dictionary's *answer* to the same question:
+`SpellChecker::extra_word_chars()` is enchant's list of non-letters allowed
+inside a word (`0123456789’` for English), and every character in it holds a
+word together from the inside exactly as an apostrophe does. A **string**, not a
+dictionary, so the contract above is intact. The point is a language held
+together by something this file never thought of, not English, where the list
+says nothing the rules do not already cover — and where several backends answer
+with nothing at all.
+
+**The rules win where they have an opinion**: the list can only turn a break
+into part of a word, never the reverse. Enchant's header warns the answer may be
+a guess, and the hyphen is refused outright however loudly it is named, because
+joining `well-known` asks about a compound no dictionary holds and puts a red
+line under an ordinary word. (`enchant_dict_is_word_character()` is the API that
+would have done exactly that: on this machine the `en_GB` dictionary answers
+*yes* for the hyphen.)
+
 **Every offset is a character offset**, the unit `GtkTextIter` counts in. Same
 rule as the undo records, same reason: bytes work until the first accented
 character.
