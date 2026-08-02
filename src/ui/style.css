@@ -89,6 +89,17 @@
     background-color: @view_bg_color;
 }
 
+/* The sidebar's focus ring is animated: the theme gives a row a 300ms
+ * transition on its outline, from 4px outside it to 2px inside. On a row whose
+ * selected background is already a rounded rectangle, a ring travelling inward
+ * onto it reads as the background shrinking and settling, which is the wrong
+ * thing to say when all that happened is that the row took the focus. It lands
+ * where it is going instead. The ring itself stays: it is how the keyboard says
+ * where it is. */
+.navigation-sidebar > row {
+    transition-duration: 0s;
+}
+
 /* A binder row's name, in both of its faces: the label it shows and the entry
  * opened over it to rename it (editable-label.h). This is the whole of the
  * look, since the widget's CSS name is its own and a theme has no rules for it.
