@@ -86,6 +86,8 @@ void test_missing_file_gives_defaults()
     check_equal(preferences.editor_text_scale_percent,
                 wordsmith::TEXT_SCALE_DEFAULT_PERCENT,
                 "a missing preferences file reads as defaults");
+    check(preferences.spell_check,
+          "and spelling is checked until the author says otherwise");
 }
 
 void test_round_trip()
@@ -95,6 +97,7 @@ void test_round_trip()
 
     wordsmith::Preferences written;
     written.editor_text_scale_percent = 140;
+    written.spell_check               = false;
 
     std::string error;
     check(wordsmith::save_preferences(written, file, error),
@@ -102,6 +105,60 @@ void test_round_trip()
 
     const wordsmith::Preferences read = wordsmith::load_preferences(file);
     check_equal(read.editor_text_scale_percent, 140, "the text size round-trips");
+    check(!read.spell_check, "and so does spelling turned off");
+}
+
+/* Off is the only answer that has to survive being written down, since on is
+ * what every other reading gives. It shares the file with the text size, so
+ * setting either has to leave the other alone. */
+void test_spell_check_is_read_and_written_beside_the_text_size()
+{
+    TempDir temp;
+
+    const fs::path off = temp.path() / "off.json";
+    write_file(off, "{\"editor-text-scale\": 110, \"spell-check\": false}\n");
+    const wordsmith::Preferences read = wordsmith::load_preferences(off);
+    check(!read.spell_check, "an explicit false turns the marking off");
+    check_equal(read.editor_text_scale_percent, 110,
+                "and leaves the text size where it was");
+
+    const fs::path on = temp.path() / "on.json";
+    write_file(on, "{\"spell-check\": true}\n");
+    check(wordsmith::load_preferences(on).spell_check, "an explicit true turns it on");
+
+    const fs::path file = temp.path() / "settings.json";
+    std::string    error;
+    wordsmith::save_preferences(wordsmith::Preferences{}, file, error);
+    check(read_file(file).find("\"spell-check\"") != std::string::npos,
+          "the answer is written under a named key");
+}
+
+/* Every way of not saying anything means on: no key, the wrong type, a file
+ * that is not JSON at all. A missing answer must not leave a manuscript
+ * quietly unchecked. */
+void test_only_an_outright_false_turns_spell_check_off()
+{
+    TempDir temp;
+
+    const fs::path no_key = temp.path() / "no-key.json";
+    write_file(no_key, "{\"editor-text-scale\": 100}\n");
+    check(wordsmith::load_preferences(no_key).spell_check,
+          "a file without the key reads as on");
+
+    const fs::path wrong_type = temp.path() / "string.json";
+    write_file(wrong_type, "{\"spell-check\": \"no\"}\n");
+    check(wordsmith::load_preferences(wrong_type).spell_check,
+          "a hand-edited string reads as on");
+
+    const fs::path zero = temp.path() / "zero.json";
+    write_file(zero, "{\"spell-check\": 0}\n");
+    check(wordsmith::load_preferences(zero).spell_check,
+          "and so does a number, however plainly it was meant");
+
+    const fs::path malformed = temp.path() / "malformed.json";
+    write_file(malformed, "{\"spell-check\": fal");
+    check(wordsmith::load_preferences(malformed).spell_check,
+          "and so does a truncated file");
 }
 
 /* The file is meant to be legible to whoever opens it, and editable in place. */
@@ -257,6 +314,8 @@ int main()
     test_bad_files_read_as_defaults();
     test_out_of_range_values_are_clamped();
     test_saving_clamps();
+    test_spell_check_is_read_and_written_beside_the_text_size();
+    test_only_an_outright_false_turns_spell_check_off();
     test_path_follows_xdg();
 
     return failures == 0 ? 0 : 1;

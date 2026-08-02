@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and test
 
-Dependencies: GTK4 ≥ 4.12 (via pkg-config), `glib-compile-resources`, CMake ≥ 3.31. The
-`argo` JSON library is a git submodule — `git submodule update --init` before a
-first build.
+Dependencies: GTK4 ≥ 4.12 (via pkg-config), Enchant 2, `glib-compile-resources`,
+CMake ≥ 3.31. The `argo` JSON library is a git submodule — `git submodule
+update --init` before a first build.
+
+Enchant is a build dependency (`libenchant-2-dev` on Debian); the *dictionaries*
+it reads are not. A machine with none installed builds, runs and passes its
+tests — nothing is marked, and the spelling tests that need one skip themselves.
 
 ```sh
 cmake --preset debug                 # configure into cmake-build-debug/
@@ -134,6 +138,12 @@ stylesheet is, through one CSS provider on the display carrying a `font-size`
 rule scoped to `.editor-pane` (`ui/text-scale.c`), rather than per panel: the
 size is one answer for the whole application, restored before any window exists.
 `text_scale_css()` is the display-free seam the UI test parses.
+
+Whether spelling is checked is the second, and the first boolean one. It takes
+the session flags' rule rather than the text size's clamp: **only an outright
+`false` turns it off**, and every other way of not saying so — no key, the wrong
+type, an unparseable file — leaves it on. Anything boolean added here inherits
+that, and the default to pick is the one that costs nothing when it is wrong.
 
 ### Session state
 
@@ -345,6 +355,68 @@ Nothing here touches block tags. Typing at the end of a heading still gives text
 without the heading tag, which save reads past — `line_kind()` asks the line's
 first character. That is unchanged, and it is the next thing in this corner
 worth fixing.
+
+### Spelling
+
+A red line under the words the dictionary does not have. Split across the
+layers the way everything else is, and the split is the load-bearing part:
+`core/spelling.hpp` holds **what counts as a word** and **whether it is
+spelled right**, `ui/spell-check.c` holds **where the line goes**.
+
+The core half is there rather than in the UI because a misspelling is a fact
+about the manuscript, not about how it is drawn. Enchant is a plain C API over
+whatever dictionaries the system has and its header pulls in nothing but
+`<stdint.h>`, so it does not cost `src/core/` the "no GLib" rule. `words_in()`
+has no dictionary behind it at all, which is what lets the rules that are worth
+arguing about — an apostrophe holds `don't` together, a hyphen breaks
+`well-known`, an em dash is not a hyphen, anything with a digit in it is not
+offered — be tested on a machine with no dictionary installed.
+
+**Every offset is a character offset**, the unit `GtkTextIter` counts in. Same
+rule as the undo records, same reason: bytes work until the first accented
+character.
+
+**Nothing here ever fails.** No dictionary installed means the checker knows
+every word, so the manuscript comes up unmarked rather than solid red, and
+nothing reports an error. That is the same trade `preferences.cpp` makes.
+
+Three things are deliberately not marked, and each is a false mark avoided:
+
+- **The word the cursor is in.** Without it every word flashes red while it is
+  being typed. `spell_check_cursor_in_word()` is the display-free seam, and its
+  asymmetry is the subtle part: the **trailing** edge counts because the cursor
+  sits at the end of a word for as long as it takes to type one, and the
+  **leading** edge does not because a freshly opened document leaves the cursor
+  at offset 0 — counting it would make the first word of every manuscript the
+  one word never checked.
+- **Anything wearing a tag given to `spell_check_skip_tag()`** — the editor
+  hands it the two code tags.
+- **Everything**, when the preference is off.
+
+Rechecking is a **line at a time**, and a line here is a whole block. Anything
+finer would have to work out for itself that deleting a space makes one word
+out of two. `spell_check_hold()`/`release()` is what keeps a document load —
+several hundred insertions — from checking the same lines once per block.
+
+The marker follows the buffer's own signals rather than being driven by the
+editor panel, and is created **after** the panel's handlers so it reads the
+tags the panel has finished applying. It must be freed before its buffer:
+`spell_check_free()` disconnects, or the next edit reaches into freed memory.
+
+One consequence reached beyond spelling. `add_spans_for_range()` walks to the
+next toggle of *any* tag, so a decoration splits a run as readily as bold does;
+it now gathers text and hands it over only when the flags change. Two spans with
+the same flags would each get their own delimiters, and a bold word with a
+squiggle under half of it would save as `**wo****rd**` — the same words, and a
+diff in the author's file every time they opened it. **Any future tag that is
+decoration rather than markup inherits this**: it is safe because the span
+walk coalesces, not because the tag was careful.
+
+`SpellChecker::accept()` is the seam the manuscript's own vocabulary will arrive
+through — a novel is full of names that are spelled right and are in no
+dictionary. It adds to enchant's session list, so nothing is written to disk;
+`remember()` is the permanent form, for an author saying "this is a word".
+Nothing reads the manuscript for names yet.
 
 ### Undo and redo
 

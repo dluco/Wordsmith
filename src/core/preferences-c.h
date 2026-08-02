@@ -28,6 +28,17 @@ int wordsmith_preferences_text_scale(void);
  *  wordsmith_free_string) when the file cannot be written. */
 int wordsmith_preferences_set_text_scale(int percent, char** error);
 
+/* Whether misspelled words are marked in the editor. On unless the author has
+ * turned it off, and every way of not answering means on; see preferences.hpp. */
+#define WORDSMITH_SPELL_CHECK_DEFAULT 1
+
+/** The saved answer, or the default when nothing is saved. */
+int wordsmith_preferences_spell_check(void);
+
+/** Record whether words are marked. Returns 0 and fills `error` (owned by the
+ *  caller, freed with wordsmith_free_string) when the file cannot be written. */
+int wordsmith_preferences_set_spell_check(int enabled, char** error);
+
 #ifdef __cplusplus
 }
 #endif

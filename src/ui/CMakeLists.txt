@@ -69,6 +69,7 @@ target_sources(wordsmith-ui PRIVATE
     editor-panel.c
     format-bar.c
     inspector-panel.c
+    spell-check.c
     text-scale.c
     undo-stack.c
 )

@@ -49,8 +49,19 @@ inline constexpr int TEXT_SCALE_MIN_PERCENT = 50;
 inline constexpr int TEXT_SCALE_MAX_PERCENT = 300;
 inline constexpr int TEXT_SCALE_DEFAULT_PERCENT = 100;
 
+/* Whether misspelled words are marked in the editor.
+ *
+ * On unless the author has said otherwise, and every way of not saying anything
+ * — no file, no key, a hand-edited value of the wrong type — means on. The
+ * session's flags are read the same way and for a related reason: the default
+ * has to be the answer that costs nothing when it is wrong, and a red line the
+ * author did not ask for is a smaller loss than a manuscript quietly going
+ * unchecked because a config file was malformed. */
+inline constexpr bool SPELL_CHECK_DEFAULT = true;
+
 struct Preferences {
-    int editor_text_scale_percent = TEXT_SCALE_DEFAULT_PERCENT;
+    int  editor_text_scale_percent = TEXT_SCALE_DEFAULT_PERCENT;
+    bool spell_check               = SPELL_CHECK_DEFAULT;
 };
 
 /** Where the preferences file lives. The file, and the directory holding it,

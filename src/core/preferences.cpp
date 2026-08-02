@@ -28,6 +28,7 @@ constexpr const char* PREFERENCES_FILE_NAME = "settings.json";
 
 constexpr const char* VERSION_KEY = "version";
 constexpr const char* TEXT_SCALE_KEY = "editor-text-scale";
+constexpr const char* SPELL_CHECK_KEY = "spell-check";
 
 /* An environment variable's value, or empty when it is unset or blank. XDG
  * treats a set-but-empty variable as unset, and so does this. */
@@ -110,6 +111,14 @@ Preferences load_preferences(const fs::path& file)
         preferences.editor_text_scale_percent = clamp_text_scale(percent);
     }
 
+    /* Only an outright `false` turns the marking off. Anything else — a number,
+     * a string, a key that is not there at all — leaves the default standing,
+     * which is what the header means by every way of not saying anything. */
+    auto spell_check = fields.find(SPELL_CHECK_KEY);
+    if (spell_check != fields.end() && spell_check->second.is_boolean()) {
+        preferences.spell_check = spell_check->second.get_bool();
+    }
+
     return preferences;
 }
 
@@ -130,6 +139,7 @@ bool save_preferences(const Preferences& preferences, const fs::path& file,
         {VERSION_KEY, argo::json::integer_value(PREFERENCES_FORMAT_VERSION)},
         {TEXT_SCALE_KEY,
          argo::json::integer_value(clamp_text_scale(preferences.editor_text_scale_percent))},
+        {SPELL_CHECK_KEY, argo::json::boolean_value(preferences.spell_check)},
     });
 
     return write_file_atomically(file, document.serialize() + "\n", error);

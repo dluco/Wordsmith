@@ -1,6 +1,7 @@
 #include "wordsmith-ui.h"
 
 #include "main-window.h"
+#include "spell-check.h"
 #include "text-scale.h"
 
 #include <gtk/gtk.h>
@@ -43,6 +44,10 @@ static void on_app_startup(GApplication* app, gpointer user_data)
     /* After the stylesheet, so the saved text size overrides it rather than
      * being overridden. */
     text_scale_init();
+
+    /* Before any window, so the first editor and the first check mark both come
+     * up wearing the saved answer rather than the default. */
+    spell_check_init();
 }
 
 static void on_app_activate(GApplication* app, gpointer user_data)

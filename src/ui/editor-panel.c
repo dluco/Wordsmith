@@ -1,5 +1,7 @@
 #include "editor-panel.h"
 
+#include "spell-check.h"
+
 #include "core/frontmatter-c.h"
 #include "core/markup-c.h"
 #include "core/project-c.h"
@@ -71,6 +73,10 @@ struct EditorPanel {
 
     EditorHistoryFn history_callback;
     void*           history_user_data;
+
+    /* The red lines under the misspelled words. Owned, and follows the buffer's
+     * own signals from here on; the panel only says when it is loading. */
+    SpellCheck* spelling;
 };
 
 /* Defined with the rest of the styling, but needed by everything that leaves
@@ -302,6 +308,11 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
      * that failed to parse has not disturbed the one it did not replace. */
     note_leaving(editor);
 
+    /* One document arriving, not several hundred insertions: without this the
+     * same lines would be checked once per block as the buffer filled. The
+     * release at the other end is what checks the document, once. */
+    spell_check_hold(editor->spelling);
+
     editor->loading = TRUE;
     gtk_text_buffer_set_text(editor->buffer, "", 0);
 
@@ -325,6 +336,7 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     gtk_text_buffer_place_cursor(editor->buffer, &start);
     gtk_text_buffer_set_modified(editor->buffer, FALSE);
     editor->loading = FALSE;
+    spell_check_release(editor->spelling);
 
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), TRUE);
 
@@ -409,12 +421,24 @@ static LineKind line_kind(EditorPanel* editor, const GtkTextIter* line_start)
 }
 
 /* Emit the spans between `start` and `end`, splitting wherever the set of
- * inline tags changes. Marker text is skipped. */
+ * inline tags changes. Marker text is skipped.
+ *
+ * The walk steps to the next toggle of *any* tag, because asking for the next
+ * toggle of each of the four inline tags in turn would cost four steps to learn
+ * the same thing. The price is that a tag with nothing to do with the markup
+ * splits a run as readily as bold does — the red line under a misspelled word
+ * is one such — so the text is gathered up and only handed over when the flags
+ * actually change. Two spans with the same flags would otherwise each get their
+ * own delimiters, and a bold word with a squiggle under half of it would save
+ * as `**wo****rd**`: the same words, correctly, and a diff in the author's file
+ * every time they opened it. */
 static void add_spans_for_range(EditorPanel* editor,
                                 WordsmithMarkupBuilder* builder,
                                 const GtkTextIter* start, const GtkTextIter* end)
 {
-    GtkTextIter cursor = *start;
+    GtkTextIter cursor        = *start;
+    GString*    pending       = g_string_new(NULL);
+    uint32_t    pending_flags = 0;
 
     while (gtk_text_iter_compare(&cursor, end) < 0) {
         GtkTextIter run_end = cursor;
@@ -433,16 +457,29 @@ static void add_spans_for_range(EditorPanel* editor,
                     flags |= 1u << bit;
                 }
             }
+
+            if (pending->len > 0 && flags != pending_flags) {
+                wordsmith_markup_builder_add_span(builder, pending->str,
+                                                  pending_flags, NULL);
+                g_string_truncate(pending, 0);
+            }
+            pending_flags = flags;
+
             char* text = gtk_text_buffer_get_text(editor->buffer, &cursor, &run_end,
                                                   FALSE);
-            if (text != NULL && text[0] != '\0') {
-                wordsmith_markup_builder_add_span(builder, text, flags, NULL);
+            if (text != NULL) {
+                g_string_append(pending, text);
             }
             g_free(text);
         }
 
         cursor = run_end;
     }
+
+    if (pending->len > 0) {
+        wordsmith_markup_builder_add_span(builder, pending->str, pending_flags, NULL);
+    }
+    g_string_free(pending, TRUE);
 }
 
 /* Gather the run of code-block lines starting at `line`, emit it as one block,
@@ -1087,6 +1124,17 @@ EditorPanel* editor_panel_new(void)
     g_signal_connect_after(editor->buffer, "delete-range",
                            G_CALLBACK(on_range_deleted), editor);
 
+    /* After the panel's own handlers, deliberately: a decoration should read
+     * the text as the panel has finished leaving it. Text typed into a code
+     * span is not wearing the code tag until on_text_inserted() has put it
+     * there, and checking first would mark a word the next line to be looked at
+     * would have skipped. */
+    editor->spelling = spell_check_new(editor->buffer);
+    spell_check_skip_tag(editor->spelling,
+                         editor->inline_tags[inline_tag_index(
+                             WORDSMITH_MARKUP_SPAN_CODE)]);
+    spell_check_skip_tag(editor->spelling, editor->code_block_tag);
+
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "editor-pane");
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),
@@ -1106,6 +1154,8 @@ void editor_panel_free(EditorPanel* editor)
     if (editor == NULL) {
         return;
     }
+    /* Before the buffer goes: the marker has handlers on it to take off. */
+    spell_check_free(editor->spelling);
     undo_record_free(editor->pending_delete);
     g_free(editor->path);
     g_free(editor->prologue);
@@ -1135,6 +1185,13 @@ void editor_panel_set_styles_callback(EditorPanel* editor, EditorStylesFn callba
 void editor_panel_set_undo_store(EditorPanel* editor, UndoStore* store)
 {
     editor->undo = store;
+}
+
+void editor_panel_set_spell_check(EditorPanel* editor, gboolean enabled)
+{
+    if (editor != NULL) {
+        spell_check_set_enabled(editor->spelling, enabled);
+    }
 }
 
 void editor_panel_set_history_callback(EditorPanel* editor,

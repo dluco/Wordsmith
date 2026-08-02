@@ -84,6 +84,11 @@ void editor_panel_set_history_callback(EditorPanel* editor,
 void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
                                gboolean reverse);
 
+/** Mark misspelled words, or stop marking them. The panel starts wherever the
+ *  preference stands, so this is for the author changing their mind; see
+ *  spell-check.h for where the answer is kept and what is left unmarked. */
+void editor_panel_set_spell_check(EditorPanel* editor, gboolean enabled);
+
 /** Load `path` into the view. Returns 0 and fills `error` (owned by the
  *  caller, freed with wordsmith_free_string) on failure. */
 int editor_panel_load(EditorPanel* editor, const char* path, char** error);

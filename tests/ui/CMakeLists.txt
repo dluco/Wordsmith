@@ -71,3 +71,20 @@ target_link_libraries(wordsmith-undo-tests PRIVATE
 target_include_directories(wordsmith-undo-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME wordsmith-undo-tests COMMAND wordsmith-undo-tests)
+
+# Headless as well: a GtkTextBuffer and its tags are plain objects, so the whole
+# marking pass runs without a display. The tests that need a dictionary say so
+# and skip themselves when there is none, since a machine without one is
+# precisely the case where nothing may be marked.
+add_executable(wordsmith-spell-check-tests
+    test-spell-check.c
+)
+
+target_link_libraries(wordsmith-spell-check-tests PRIVATE
+    wordsmith-ui
+    gtk4_lib
+)
+
+target_include_directories(wordsmith-spell-check-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME wordsmith-spell-check-tests COMMAND wordsmith-spell-check-tests)

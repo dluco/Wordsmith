@@ -3,6 +3,7 @@
 #include "binder-panel.h"
 #include "editor-panel.h"
 #include "project-actions.h"
+#include "spell-check.h"
 #include "text-scale.h"
 
 #include "core/markup-c.h"
@@ -260,6 +261,12 @@ static void on_show_format_bar(GSimpleAction* action, GVariant* value, gpointer 
     ui_state_set_format_bar_visible(user, g_variant_get_boolean(value));
 }
 
+static void on_spell_check(GSimpleAction* action, GVariant* value, gpointer user)
+{
+    (void) action;
+    ui_state_set_spell_check(user, g_variant_get_boolean(value));
+}
+
 static void on_composition_mode(GSimpleAction* action, GVariant* value, gpointer user)
 {
     g_simple_action_set_state(action, value);
@@ -407,6 +414,16 @@ static const ToggleSpec TOGGLE_ACTIONS[] = {
      * buy one menu item. */
     { "show-format-bar", "change-state", G_CALLBACK(on_show_format_bar), TRUE,
       NULL },
+    /* The starting position here is the *default*, not the answer: spelling is
+     * a preference, and what the author last said is put on the check mark
+     * below, after the actions exist to carry it.
+     *
+     * No chord, deliberately, and for a different reason from the format bar's.
+     * The letters this would want are the manuscript's — an accelerator
+     * outranks GtkTextView's own bindings — and turning the marking on and off
+     * is something an author does twice a year, not twice an hour. */
+    { "spell-check", "change-state", G_CALLBACK(on_spell_check),
+      WORDSMITH_SPELL_CHECK_DEFAULT != 0, NULL },
     /* F11 is the full-screen key everywhere else, and this is what full screen
      * means in a manuscript editor. Escape leaves as well; see main-window.c. */
     { "composition-mode", "change-state", G_CALLBACK(on_composition_mode), FALSE,
@@ -455,6 +472,19 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
             gtk_application_set_accels_for_action(app, detailed, accels);
             g_free(detailed);
         }
+    }
+
+    /* Spelling starts where the author left it rather than where the table
+     * says. The state is *set* and not changed: g_simple_action_set_state()
+     * moves the check mark without raising "change-state", so putting a saved
+     * answer back does not travel round the handler and get written out again
+     * as a fresh one. The editor panel reads the same answer for itself, and
+     * both read it from spell-check.c, which is why they cannot disagree. */
+    GAction* spelling =
+        g_action_map_lookup_action(G_ACTION_MAP(state->window), "spell-check");
+    if (spelling != NULL) {
+        g_simple_action_set_state(G_SIMPLE_ACTION(spelling),
+                                  g_variant_new_boolean(spell_check_wanted()));
     }
 }
 
@@ -517,6 +547,16 @@ static GMenuModel* build_menu_model(GMenu** undo_section_out)
     g_menu_append(item_section, "Move to Trash", "win.trash");
     g_menu_append_section(edit_menu, NULL, G_MENU_MODEL(item_section));
     g_object_unref(item_section);
+
+    /* Spelling sits with the editing verbs rather than in View, beside the text
+     * size it otherwise resembles. Both are preferences, but View answers what
+     * is on screen — which panes, how big, how much of it — and this answers
+     * whether the manuscript is being read for mistakes, which is a thing done
+     * to the words. It is where every editor that has this puts it. */
+    GMenu* spelling_section = g_menu_new();
+    g_menu_append(spelling_section, "Check Spelling", "win.spell-check");
+    g_menu_append_section(edit_menu, NULL, G_MENU_MODEL(spelling_section));
+    g_object_unref(spelling_section);
 
     g_menu_append_submenu(menubar, "_Edit", G_MENU_MODEL(edit_menu));
     g_object_unref(edit_menu);

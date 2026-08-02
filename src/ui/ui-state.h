@@ -66,6 +66,15 @@ void ui_state_set_binder_visible(WordsmithUiState* state, gboolean visible);
 void ui_state_set_inspector_visible(WordsmithUiState* state, gboolean visible);
 void ui_state_set_format_bar_visible(WordsmithUiState* state, gboolean visible);
 
+/** Mark misspelled words in the editor, or stop marking them, and remember it.
+ *
+ *  The one way the answer changes, for the reason the three above are: the
+ *  editor and the Edit menu's check mark both follow from here, rather than
+ *  from each other. Unlike them this is a preference and not session state — it
+ *  describes the author rather than the project — so it is written to the
+ *  config file and applies to every project they open. */
+void ui_state_set_spell_check(WordsmithUiState* state, gboolean enabled);
+
 /* Composition mode: the manuscript alone, full screen.
  *
  * It is a mode rather than a preference, so nothing about it is written down —

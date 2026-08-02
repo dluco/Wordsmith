@@ -14,6 +14,7 @@ endfunction()
 
 wordsmith_add_core_test(wordsmith-version-tests test-version.cpp)
 wordsmith_add_core_test(wordsmith-markup-tests test-markup.cpp)
+wordsmith_add_core_test(wordsmith-spelling-tests test-spelling.cpp)
 wordsmith_add_core_test(wordsmith-project-tests test-project.cpp)
 wordsmith_add_core_test(wordsmith-preferences-tests test-preferences.cpp)
 wordsmith_add_core_test(wordsmith-session-tests test-session.cpp)

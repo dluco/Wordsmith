@@ -6,6 +6,7 @@
 #include "inspector-panel.h"
 #include "menu-bar.h"
 #include "project-actions.h"
+#include "spell-check.h"
 
 #include "core/markup-c.h"
 #include "core/session-c.h"
@@ -109,6 +110,24 @@ void ui_state_set_format_bar_visible(WordsmithUiState* state, gboolean visible)
     }
 
     ui_state_remember_session(state);
+}
+
+/* The same shape as the three above — the check mark and the thing itself both
+ * move from here — with two differences that follow from this being a
+ * preference rather than session state. It is written to the config file
+ * instead of the session, so there is nothing to remember per project; and a
+ * failed write is worth a word, because the marking is right for this sitting
+ * and wrong after a restart. Composition mode has no opinion: it hides panes,
+ * and the manuscript keeps its spelling. */
+void ui_state_set_spell_check(WordsmithUiState* state, gboolean enabled)
+{
+    set_toggle_state(state, "spell-check", enabled);
+    editor_panel_set_spell_check(state->editor, enabled);
+
+    char* error = NULL;
+    if (!spell_check_set_wanted(enabled, &error)) {
+        ui_state_report_error(state, "Cannot save the spelling preference", error);
+    }
 }
 
 /* ── composition mode ────────────────────────────────────────────────────── */
