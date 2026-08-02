@@ -425,12 +425,30 @@ edits do not raise: what undo should do when the file has changed on disk since
 the record was made. Deleting needs it least by design rather than by luck: the
 file is in the trash, not gone.
 
-### Renaming
+### Naming, and renaming
 
-A click on the name of a row **that was already selected** opens an entry over
-it, the macOS gesture; F2 and the binder's context menu are the other ways in,
-both through `project_actions_rename()` so every item command arrives by one
-door. The click gesture is on the row's label rather than the row, leaving the
+**Every name is typed into the binder row, never into a dialog.** New Text, New
+Folder and New Folder with Selection each create the item untitled and open an
+entry over its name; there is no name prompt anywhere in the application.
+
+That means something reaches disk before the author has said what it is called,
+rather than a placeholder row standing in the tree until they do. The binder is
+a directory scan, so **a row with no file behind it is a row the scan cannot
+produce** — a placeholder would be an entry `load_binder()` has no way to return,
+which is the one thing the binder's contract does not allow. An author who
+dismisses the entry keeps an item called `Untitled`, which is what every file
+manager that names this way leaves behind.
+
+`create_untitled_document()`, `create_untitled_folder()` and
+`group_into_untitled_folder()` each pick a free name (`Untitled`, `Untitled-2`)
+and create the item in the same call. Handing the name back for the caller to
+pass to `create_document()` would leave a gap between choosing a name and taking
+it, and would put a create that fails on a collision back in the caller's way.
+`unused_path()` is the shared helper, and the trash uses it for the same job.
+
+A click on the name of a row **that was already selected** opens the same entry,
+the macOS gesture; F2 and the binder's context menu are the other ways in, both
+through `project_actions_rename()` so every item command arrives by one door. The click gesture is on the row's label rather than the row, leaving the
 icon and the expander's twist arrow alone, and it sits in the bubble phase — so
 it runs before the list view moves the selection, and "already selected" means
 as of before this click, which is the question being asked.
@@ -440,6 +458,14 @@ The name is a `GtkStack` of a label and an entry rather than a
 ellipsize the label it shows, so one long chapter name would make the whole
 binder scroll sideways, and it starts editing on a double click, which is not
 the gesture wanted. Neither is reachable from outside the widget.
+
+A newly created row has no widget yet — the file lands, the binder rebuilds, and
+the list view builds rows during its next layout — so `binder_panel_begin_rename()`
+leaves the request in `rename_when_bound` and `bind` picks it up when the row
+appears. It starts the edit from an idle rather than inside `bind`, since moving
+the focus and swapping a stack page in the middle of the list view allocating its
+rows is asking for trouble. `binder_panel_select_path()` scrolls to the row it
+selects, which is what makes sure the row gets built at all.
 
 `finish_rename()` clears the panel's record of the edit **before** it puts the
 label back, because doing so takes the focus off the entry and the focus handler

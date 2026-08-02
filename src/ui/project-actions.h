@@ -13,20 +13,27 @@ void project_actions_close(WordsmithUiState* state);
 
 void project_actions_save(WordsmithUiState* state);
 
-/** Prompt for a name, then create a folder in the binder's target folder. */
+/* Creating items. None of these asks for a name first: the item is created
+ * untitled and the binder opens an entry over its name, so the author types it
+ * where they will read it rather than into a dialog in front of it. See
+ * `Project::create_untitled_document()` for why something reaches disk before it
+ * has been named. */
+
+/** Create a folder in the binder's target folder, and name it in place. */
 void project_actions_new_folder(WordsmithUiState* state);
 
-/** Prompt for a title, then create a document and open it. */
+/** Create a document in the binder's target folder, open it, and name it in
+ *  place. */
 void project_actions_new_text(WordsmithUiState* state);
 
 /* The same two, but told where to put the new item rather than asking the
  * binder's selection. The context menu names its target at click time, since
- * the prompt outlives the popover that raised it. */
+ * the popover that raised it is gone by the time anything happens. */
 void project_actions_new_folder_in(WordsmithUiState* state, const char* parent);
 void project_actions_new_text_in(WordsmithUiState* state, const char* parent);
 
-/** Prompt for a name, then create a folder beside `item` and move `item` into
- *  it. Reopens the document afterwards if the move took it, or the folder it
+/** Create a folder beside `item`, move `item` into it, and name the folder in
+ *  place. Reopens the document afterwards if the move took it, or the folder it
  *  was in, out from under the editor. */
 void project_actions_new_folder_with_selection(WordsmithUiState* state,
                                                const char* item);

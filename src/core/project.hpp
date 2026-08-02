@@ -49,6 +49,11 @@ inline constexpr const char* DOCUMENT_EXTENSION = ".md";
  * The list is a hint, never an authority — see `load_binder`. */
 inline constexpr const char* FOLDER_METADATA_FILE_NAME = "metadata.yaml";
 
+/* What a new item is called before the author has said. Creating one puts an
+ * entry over its name in the binder rather than asking in a dialog first, so
+ * something has to be on disk to be renamed — see `create_untitled_document`. */
+inline constexpr const char* UNTITLED_NAME = "Untitled";
+
 /* Where a deleted item goes, inside the `PRIVATE_FOLDER_NAME` directory that
  * `snapshots.hpp` declares and describes. Both of the things Wordsmith keeps on
  * an author's behalf sit under that one hidden folder, so what they cost can be
@@ -189,6 +194,37 @@ public:
     bool move_entry(const std::filesystem::path& source,
                     const std::filesystem::path& destination_parent,
                     std::filesystem::path& moved_path, std::string& error) const;
+
+    /* The three creating verbs above, for an author who has not been asked for a
+     * name and is about to type one into the binder.
+     *
+     * Each picks a name nothing in the target folder is using — `Untitled`, then
+     * `Untitled-2` and so on — and creates the item under it. The free name is
+     * found and used in one call rather than handed back for the caller to pass
+     * to `create_document`, so there is no gap between choosing a name and
+     * taking it, and no way to reach a create that fails on a collision the
+     * caller had no way to see coming.
+     *
+     * Something has to exist before it can be renamed, which is the whole reason
+     * these are here: the binder is built from a directory scan, so a row with
+     * no file behind it is a row the scan cannot produce. An author who dismisses
+     * the entry is left with an item called `Untitled`, which is what every file
+     * manager that names this way leaves behind, and is undone by deleting it. */
+
+    bool create_untitled_document(const std::filesystem::path& parent,
+                                  std::filesystem::path& created_path,
+                                  std::string& error) const;
+
+    bool create_untitled_folder(const std::filesystem::path& parent,
+                                std::filesystem::path& created_path,
+                                std::string& error) const;
+
+    /** `group_into_new_folder` with the same treatment: the folder is created
+     *  untitled, and the item moved into it. */
+    bool group_into_untitled_folder(const std::filesystem::path& item,
+                                    std::filesystem::path& folder_path,
+                                    std::filesystem::path& moved_path,
+                                    std::string& error) const;
 
     /** Rename `item` to `new_name`, reporting where it landed through
      *  `renamed_path`.

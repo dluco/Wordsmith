@@ -89,10 +89,11 @@ void binder_panel_set_rename_callback(BinderPanel* binder, BinderRenameFn callba
  *  same edit — the macOS gesture — which is why this is only the other way in
  *  (F2, and the context menu) rather than the only one.
  *
- *  A row that has scrolled out of the tree has no widget to edit, and this does
- *  nothing rather than scrolling the binder around underneath the author. Both
- *  callers name a row that is on screen: one is the selection, the other was
- *  just right-clicked. */
+ *  A row the list view has not built yet — the ordinary case for something just
+ *  created, since the file reaches disk and the binder rebuilds before there is
+ *  any widget to type into — leaves the request waiting, and the row starts the
+ *  edit as it appears. Anything that rebuilds the tree in the meantime drops it,
+ *  so a request can never surface over an unrelated row later. */
 void binder_panel_begin_rename(BinderPanel* binder, const char* path);
 
 /** Point the binder at a project, or NULL to empty it. The project is borrowed

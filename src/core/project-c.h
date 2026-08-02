@@ -98,6 +98,24 @@ int wordsmith_project_group_into_new_folder(WordsmithProject* project,
                                              const char* name, char** folder_path,
                                              char** moved_path, char** error);
 
+/* The same three, for an author who has not been asked for a name and is about
+ * to type one into the binder. Each picks a name nothing in the target folder is
+ * using — `Untitled`, then `Untitled-2` and so on — so none of them can fail on
+ * a collision the caller had no way to see coming. */
+
+int wordsmith_project_create_untitled_document(WordsmithProject* project,
+                                                const char* parent_path,
+                                                char** created_path, char** error);
+
+int wordsmith_project_create_untitled_folder(WordsmithProject* project,
+                                              const char* parent_path,
+                                              char** created_path, char** error);
+
+int wordsmith_project_group_into_untitled_folder(WordsmithProject* project,
+                                                  const char* item_path,
+                                                  char** folder_path,
+                                                  char** moved_path, char** error);
+
 /** Rename the item at `item_path` to `new_name`, a user-typed title that gets
  *  sanitised into a filename. The item keeps its place in its folder's recorded
  *  order. On success `renamed_path`, if non-NULL, receives the new location. */

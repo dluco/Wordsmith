@@ -301,6 +301,77 @@ int wordsmith_project_group_into_new_folder(WordsmithProject* project,
     return 1;
 }
 
+int wordsmith_project_create_untitled_document(WordsmithProject* project,
+                                                const char* parent_path,
+                                                char** created_path, char** error)
+{
+    if (project == nullptr || parent_path == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path created;
+    std::string message;
+    if (!project->project->create_untitled_document(fs::path(parent_path), created,
+                                                    message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (created_path != nullptr) {
+        *created_path = duplicate(created.string());
+    }
+    return 1;
+}
+
+int wordsmith_project_create_untitled_folder(WordsmithProject* project,
+                                              const char* parent_path,
+                                              char** created_path, char** error)
+{
+    if (project == nullptr || parent_path == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path created;
+    std::string message;
+    if (!project->project->create_untitled_folder(fs::path(parent_path), created,
+                                                  message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (created_path != nullptr) {
+        *created_path = duplicate(created.string());
+    }
+    return 1;
+}
+
+int wordsmith_project_group_into_untitled_folder(WordsmithProject* project,
+                                                  const char* item_path,
+                                                  char** folder_path,
+                                                  char** moved_path, char** error)
+{
+    if (project == nullptr || item_path == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path folder;
+    fs::path moved;
+    std::string message;
+    if (!project->project->group_into_untitled_folder(fs::path(item_path), folder,
+                                                      moved, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (folder_path != nullptr) {
+        *folder_path = duplicate(folder.string());
+    }
+    if (moved_path != nullptr) {
+        *moved_path = duplicate(moved.string());
+    }
+    return 1;
+}
+
 int wordsmith_project_rename(WordsmithProject* project, const char* item_path,
                               const char* new_name, char** renamed_path,
                               char** error)

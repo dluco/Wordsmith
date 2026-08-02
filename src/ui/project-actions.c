@@ -10,112 +10,6 @@
 
 #include <string.h>
 
-/* ── name prompt ─────────────────────────────────────────────────────────── */
-
-/* What to do with the name the user typed. `target` is the folder to create in,
- * or the item to gather up, decided when the prompt opened. */
-typedef void (*NameEnteredFn)(WordsmithUiState* state, const char* name,
-                              const char* target);
-
-typedef struct NamePrompt {
-    WordsmithUiState* state;
-    GtkWindow*         window;
-    GtkEntry*          entry;
-    NameEnteredFn      on_entered;
-    char*              target;   /* owned */
-} NamePrompt;
-
-static void name_prompt_accept(NamePrompt* prompt)
-{
-    const char* text = gtk_editable_get_text(GTK_EDITABLE(prompt->entry));
-    if (text != NULL && text[0] != '\0') {
-        prompt->on_entered(prompt->state, text, prompt->target);
-    }
-    gtk_window_destroy(prompt->window);
-}
-
-static void on_name_prompt_activate(GtkEntry* entry, gpointer user_data)
-{
-    (void) entry;
-    name_prompt_accept(user_data);
-}
-
-static void on_name_prompt_create(GtkButton* button, gpointer user_data)
-{
-    (void) button;
-    name_prompt_accept(user_data);
-}
-
-static void on_name_prompt_cancel(GtkButton* button, gpointer user_data)
-{
-    (void) button;
-    NamePrompt* prompt = user_data;
-    gtk_window_destroy(prompt->window);
-}
-
-static void on_name_prompt_destroy(GtkWidget* widget, gpointer user_data)
-{
-    (void) widget;
-    NamePrompt* prompt = user_data;
-    g_free(prompt->target);
-    g_free(prompt);
-}
-
-/* A small modal asking for one name. GtkAlertDialog has no text entry, so this
- * is a plain window rather than anything fancier. `target` is copied. */
-static void show_name_prompt(WordsmithUiState* state, const char* title,
-                             const char* placeholder, const char* target,
-                             NameEnteredFn on_entered)
-{
-    if (target == NULL) {
-        return;
-    }
-
-    NamePrompt* prompt = g_new0(NamePrompt, 1);
-    prompt->state      = state;
-    prompt->on_entered = on_entered;
-    prompt->target     = g_strdup(target);
-
-    GtkWidget* window = gtk_window_new();
-    prompt->window = GTK_WINDOW(window);
-    gtk_window_set_title(GTK_WINDOW(window), title);
-    gtk_window_set_transient_for(GTK_WINDOW(window), state->window);
-    gtk_window_set_modal(GTK_WINDOW(window), TRUE);
-    gtk_window_set_default_size(GTK_WINDOW(window), 360, -1);
-    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
-
-    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_top(box, 16);
-    gtk_widget_set_margin_bottom(box, 16);
-    gtk_widget_set_margin_start(box, 16);
-    gtk_widget_set_margin_end(box, 16);
-
-    GtkWidget* entry = gtk_entry_new();
-    prompt->entry = GTK_ENTRY(entry);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), placeholder);
-    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-    gtk_box_append(GTK_BOX(box), entry);
-
-    GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_widget_set_halign(buttons, GTK_ALIGN_END);
-    GtkWidget* cancel = gtk_button_new_with_label("Cancel");
-    GtkWidget* create = gtk_button_new_with_label("Create");
-    gtk_widget_add_css_class(create, "suggested-action");
-    gtk_box_append(GTK_BOX(buttons), cancel);
-    gtk_box_append(GTK_BOX(buttons), create);
-    gtk_box_append(GTK_BOX(box), buttons);
-
-    gtk_window_set_child(GTK_WINDOW(window), box);
-
-    g_signal_connect(entry, "activate", G_CALLBACK(on_name_prompt_activate), prompt);
-    g_signal_connect(create, "clicked", G_CALLBACK(on_name_prompt_create), prompt);
-    g_signal_connect(cancel, "clicked", G_CALLBACK(on_name_prompt_cancel), prompt);
-    g_signal_connect(window, "destroy", G_CALLBACK(on_name_prompt_destroy), prompt);
-
-    gtk_window_present(GTK_WINDOW(window));
-    gtk_widget_grab_focus(entry);
-}
-
 /* ── opening and creating projects ───────────────────────────────────────── */
 
 void project_actions_open_path(WordsmithUiState* state, const char* root)
@@ -460,13 +354,26 @@ void project_actions_apply_metadata_record(WordsmithUiState* state,
 
 /* ── creating binder items ───────────────────────────────────────────────── */
 
-static void create_folder_named(WordsmithUiState* state, const char* name,
-                                const char* parent)
+/* Every one of these creates the item under a name nothing is using and then
+ * opens an entry over it in the binder, rather than asking for a name in a
+ * dialog first.
+ *
+ * The binder is a directory scan, so a row with no file behind it is a row the
+ * scan cannot produce — which is why something exists on disk before the author
+ * has said what it is called, rather than a placeholder standing in the tree
+ * until they do. An author who dismisses the entry keeps an item called
+ * Untitled, which is what every file manager that names this way leaves behind. */
+
+void project_actions_new_folder_in(WordsmithUiState* state, const char* parent)
 {
+    if (state->project == NULL || parent == NULL) {
+        return;
+    }
+
     char* created = NULL;
     char* error = NULL;
-    if (!wordsmith_project_create_folder(state->project, parent, name, &created,
-                                          &error)) {
+    if (!wordsmith_project_create_untitled_folder(state->project, parent, &created,
+                                                   &error)) {
         ui_state_report_error(state, "Could not create folder", error);
         return;
     }
@@ -474,16 +381,9 @@ static void create_folder_named(WordsmithUiState* state, const char* name,
     ui_state_reload_project(state);
     if (created != NULL) {
         binder_panel_select_path(state->binder, created);
+        binder_panel_begin_rename(state->binder, created);
     }
     wordsmith_free_string(created);
-}
-
-void project_actions_new_folder_in(WordsmithUiState* state, const char* parent)
-{
-    if (state->project == NULL) {
-        return;
-    }
-    show_name_prompt(state, "New Folder", "Folder name", parent, create_folder_named);
 }
 
 void project_actions_new_folder(WordsmithUiState* state)
@@ -496,13 +396,16 @@ void project_actions_new_folder(WordsmithUiState* state)
     g_free(parent);
 }
 
-static void create_text_named(WordsmithUiState* state, const char* name,
-                              const char* parent)
+void project_actions_new_text_in(WordsmithUiState* state, const char* parent)
 {
+    if (state->project == NULL || parent == NULL) {
+        return;
+    }
+
     char* created = NULL;
     char* error = NULL;
-    if (!wordsmith_project_create_document(state->project, parent, name, &created,
-                                            &error)) {
+    if (!wordsmith_project_create_untitled_document(state->project, parent, &created,
+                                                     &error)) {
         ui_state_report_error(state, "Could not create document", error);
         return;
     }
@@ -510,17 +413,12 @@ static void create_text_named(WordsmithUiState* state, const char* name,
     ui_state_reload_project(state);
     if (created != NULL) {
         binder_panel_select_path(state->binder, created);
+        /* Opened before the entry takes the focus, so the manuscript pane is
+         * already showing the new document while its name is being typed. */
         project_actions_open_document(state, created);
+        binder_panel_begin_rename(state->binder, created);
     }
     wordsmith_free_string(created);
-}
-
-void project_actions_new_text_in(WordsmithUiState* state, const char* parent)
-{
-    if (state->project == NULL) {
-        return;
-    }
-    show_name_prompt(state, "New Text", "Document title", parent, create_text_named);
 }
 
 void project_actions_new_text(WordsmithUiState* state)
@@ -626,35 +524,34 @@ void project_actions_move_beside(WordsmithUiState* state, const char* source,
     g_free(was_open);
 }
 
-static void create_folder_with_selection_named(WordsmithUiState* state,
-                                               const char* name, const char* item)
+void project_actions_new_folder_with_selection(WordsmithUiState* state,
+                                               const char* item)
 {
+    if (state->project == NULL || item == NULL) {
+        return;
+    }
+
     char* was_open = save_and_remember_open(state);
 
     char* folder = NULL;
     char* moved = NULL;
     char* error = NULL;
-    if (!wordsmith_project_group_into_new_folder(state->project, item, name, &folder,
-                                                  &moved, &error)) {
+    if (!wordsmith_project_group_into_untitled_folder(state->project, item, &folder,
+                                                       &moved, &error)) {
         ui_state_report_error(state, "Could not gather the item into a new folder",
                               error);
     } else {
         settle_after_move(state, item, moved, was_open);
+        /* The folder is the new thing here, so it is the folder that gets the
+         * entry — even though it is the item inside it that settling left
+         * selected and open. */
+        binder_panel_select_path(state->binder, folder);
+        binder_panel_begin_rename(state->binder, folder);
     }
 
     wordsmith_free_string(moved);
     wordsmith_free_string(folder);
     g_free(was_open);
-}
-
-void project_actions_new_folder_with_selection(WordsmithUiState* state,
-                                               const char* item)
-{
-    if (state->project == NULL) {
-        return;
-    }
-    show_name_prompt(state, "New Folder with Selection", "Folder name", item,
-                     create_folder_with_selection_named);
 }
 
 /* ── renaming items ──────────────────────────────────────────────────────── */

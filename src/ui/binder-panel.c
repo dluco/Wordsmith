@@ -105,6 +105,12 @@ struct BinderPanel {
     char*          renaming_path;
     char*          renaming_name;
 
+    /* An edit asked for on a row the list view has not built yet. Creating an
+     * item is the case: the file lands on disk, the binder rebuilds, and the row
+     * for it exists in the model long before there is a widget to type into.
+     * `bind` starts the edit the moment one appears. Owned. */
+    char*          rename_when_bound;
+
     /* Set while the panel is opening folders itself, so putting an expansion
      * back does not read as the author having asked for it. */
     gboolean       applying_expansion;
@@ -493,6 +499,7 @@ static void start_rename(BinderPanel* binder, GtkWidget* row, BinderItem* item)
 
     /* Whatever was being renamed before, this is what is being renamed now. */
     finish_rename(binder, TRUE);
+    g_clear_pointer(&binder->rename_when_bound, g_free);
 
     binder->renaming_entry = entry;
     binder->renaming_path  = g_strdup(item->path);
@@ -577,12 +584,11 @@ static void on_name_click(GtkGestureClick* gesture, int n_press, double x, doubl
     g_object_unref(item);
 }
 
-void binder_panel_begin_rename(BinderPanel* binder, const char* path)
+/* Start the edit on the row showing `path`, if the list view has built one.
+ * Rows are only widgets for what is on screen, so this answers no as readily as
+ * yes and the caller decides what that is worth. */
+static gboolean start_rename_at(BinderPanel* binder, const char* path)
 {
-    if (binder == NULL || path == NULL || binder->project == NULL) {
-        return;
-    }
-
     for (GtkWidget* child = gtk_widget_get_first_child(GTK_WIDGET(binder->list_view));
          child != NULL; child = gtk_widget_get_next_sibling(child)) {
         GtkWidget* row = row_widget_from(gtk_widget_get_first_child(child));
@@ -598,9 +604,46 @@ void binder_panel_begin_rename(BinderPanel* binder, const char* path)
         g_object_unref(item);
 
         if (matched) {
-            return;
+            return TRUE;
         }
     }
+    return FALSE;
+}
+
+/* Waiting for a row to be built, and then asking again from outside the layout
+ * that built it. Starting the edit inside `bind` would mean moving the focus and
+ * swapping a stack page in the middle of the list view allocating its rows. */
+typedef struct PendingEdit {
+    BinderPanel* binder;
+    char*        path;
+} PendingEdit;
+
+static gboolean run_pending_edit(gpointer user_data)
+{
+    PendingEdit* edit = user_data;
+
+    start_rename_at(edit->binder, edit->path);
+
+    g_free(edit->path);
+    g_free(edit);
+    return G_SOURCE_REMOVE;
+}
+
+void binder_panel_begin_rename(BinderPanel* binder, const char* path)
+{
+    if (binder == NULL || path == NULL || binder->project == NULL) {
+        return;
+    }
+    if (start_rename_at(binder, path)) {
+        return;
+    }
+
+    /* No widget for it yet, which is the ordinary case for something just
+     * created. The request waits for the row to be built rather than being
+     * dropped; `binder_panel_select_path` has already scrolled to it, so the
+     * list view is about to build it. */
+    g_free(binder->rename_when_bound);
+    binder->rename_when_bound = g_strdup(path);
 }
 
 /* ── list model ─────────────────────────────────────────────────────────── */
@@ -701,8 +744,8 @@ static void on_bind_row(GtkSignalListItemFactory* factory, GtkListItem* list_ite
                         gpointer user_data)
 {
     (void) factory;
-    (void) user_data;
 
+    BinderPanel* binder = user_data;
     GtkTreeListRow* row = gtk_list_item_get_item(list_item);
     BinderItem* item = gtk_tree_list_row_get_item(row);
 
@@ -716,6 +759,14 @@ static void on_bind_row(GtkSignalListItemFactory* factory, GtkListItem* list_ite
                                  item->is_folder ? "folder-symbolic"
                                                  : "text-x-generic-symbolic");
     gtk_label_set_text(GTK_LABEL(row_name_label(expander)), item->name);
+
+    /* The row an edit was asked for before there was a row to ask about. */
+    if (g_strcmp0(binder->rename_when_bound, item->path) == 0) {
+        PendingEdit* edit = g_new0(PendingEdit, 1);
+        edit->binder = binder;
+        edit->path   = g_steal_pointer(&binder->rename_when_bound);
+        g_idle_add(run_pending_edit, edit);
+    }
 
     g_object_unref(item);
 }
@@ -898,6 +949,12 @@ void binder_panel_reload(BinderPanel* binder)
      * discarded edit as an accepted one. */
     finish_rename(binder, FALSE);
 
+    /* An edit waiting for a row that the rebuild is about to renumber is waiting
+     * for something that may never come. The one case that has to survive is a
+     * rename asked for on a freshly created item, and that asks *after* the
+     * reload it caused, not before. */
+    g_clear_pointer(&binder->rename_when_bound, g_free);
+
     /* The rebuild drops every row and with it every expander's state, so the
      * open folders are carried across by hand. Without this, creating a
      * document at the bottom of a book would fold the whole binder shut. */
@@ -1004,6 +1061,11 @@ void binder_panel_select_path(BinderPanel* binder, const char* path)
 
         if (matched) {
             gtk_single_selection_set_selected(binder->selection, index);
+            /* Bring it on screen. Selecting a row does not scroll to it, and a
+             * row off the bottom of the pane has no widget — which for something
+             * just created means nothing to type its name into. */
+            gtk_list_view_scroll_to(binder->list_view, index, GTK_LIST_SCROLL_NONE,
+                                    NULL);
             g_object_unref(item);
             g_object_unref(row);
             return;
@@ -1088,7 +1150,7 @@ BinderPanel* binder_panel_new(void)
 
     GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(on_setup_row), binder);
-    g_signal_connect(factory, "bind", G_CALLBACK(on_bind_row), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(on_bind_row), binder);
     g_signal_connect(factory, "unbind", G_CALLBACK(on_unbind_row), binder);
 
     GtkWidget* list_view = gtk_list_view_new(NULL, factory);
@@ -1138,6 +1200,7 @@ void binder_panel_free(BinderPanel* binder)
     }
     g_free(binder->renaming_path);
     g_free(binder->renaming_name);
+    g_free(binder->rename_when_bound);
     g_free(binder);
 }
 

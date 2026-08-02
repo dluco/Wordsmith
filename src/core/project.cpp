@@ -83,6 +83,34 @@ bool paths_equal(const fs::path& left, const fs::path& right)
     return !code && a == b;
 }
 
+/* `folder/<stem><extension>` while that is free, then `<stem>-2<extension>`,
+ * `<stem>-3<extension>` and so on. The counter goes before the extension so a
+ * document is still a `.md` file a file manager will open on a double click.
+ *
+ * Bounded rather than looping until it finds a gap: an `fs::exists` that kept
+ * answering yes would otherwise spin forever. Past the cap the last candidate
+ * comes back regardless, and whatever the caller does with it fails with a real
+ * message about a real path, which is a better answer than a hang. */
+fs::path unused_path(const fs::path& folder, const std::string& stem,
+                     const std::string& extension)
+{
+    constexpr int MAX_ATTEMPTS = 1000;
+
+    fs::path candidate = folder / (stem + extension);
+    std::error_code code;
+    if (!fs::exists(candidate, code)) {
+        return candidate;
+    }
+
+    for (int counter = 2; counter < MAX_ATTEMPTS; counter++) {
+        candidate = folder / (stem + "-" + std::to_string(counter) + extension);
+        if (!fs::exists(candidate, code)) {
+            break;
+        }
+    }
+    return candidate;
+}
+
 } // namespace
 
 /* ── folder metadata ────────────────────────────────────────────────────── */
@@ -665,41 +693,6 @@ bool Project::rename_entry(const fs::path& item, std::string_view new_name,
     return true;
 }
 
-namespace {
-
-/* `folder/<name>` while that is free, then `<stem>-2<ext>`, `<stem>-3<ext>` and
- * so on. The counter goes before the extension so a trashed document is still a
- * `.md` file that a file manager will open on a double click.
- *
- * Bounded rather than looping until it finds a gap: an `fs::exists` that keeps
- * answering yes would otherwise spin forever. Past the cap the last candidate is
- * handed back regardless, and the rename that follows fails with a real message
- * about a real path — which is a better answer than a hang. */
-fs::path free_trash_name(const fs::path& folder, const fs::path& item,
-                         bool is_folder)
-{
-    constexpr int MAX_ATTEMPTS = 1000;
-
-    fs::path candidate = folder / item.filename();
-    std::error_code code;
-    if (!fs::exists(candidate, code)) {
-        return candidate;
-    }
-
-    const std::string stem = is_folder ? item.filename().string() : item.stem().string();
-    const std::string extension = is_folder ? std::string() : item.extension().string();
-
-    for (int counter = 2; counter < MAX_ATTEMPTS; counter++) {
-        candidate = folder / (stem + "-" + std::to_string(counter) + extension);
-        if (!fs::exists(candidate, code)) {
-            break;
-        }
-    }
-    return candidate;
-}
-
-} // namespace
-
 bool Project::trash_entry(const fs::path& item, fs::path& trashed_path,
                           std::string& error) const
 {
@@ -735,7 +728,10 @@ bool Project::trash_entry(const fs::path& item, fs::path& trashed_path,
         return false;
     }
 
-    const fs::path target = free_trash_name(destination, item, is_folder);
+    const fs::path target =
+        unused_path(destination, is_folder ? item.filename().string()
+                                           : item.stem().string(),
+                    is_folder ? std::string() : item.extension().string());
 
     fs::rename(item, target, code);
     if (code) {
@@ -768,6 +764,51 @@ bool Project::create_document(const fs::path& parent, std::string_view name,
     }
     created_path = target;
     return true;
+}
+
+/* ── creating without a name ────────────────────────────────────────────── */
+
+/* All three take the free name and use it in the same call. Handing one back for
+ * the caller to pass to `create_document` would leave a gap between choosing a
+ * name and taking it, and would put a create that fails on a collision back in
+ * the caller's way. */
+
+bool Project::create_untitled_document(const fs::path& parent, fs::path& created_path,
+                                       std::string& error) const
+{
+    if (!contains(parent)) {
+        error = "target folder is outside the manuscript";
+        return false;
+    }
+
+    const fs::path free = unused_path(parent, UNTITLED_NAME, DOCUMENT_EXTENSION);
+    return create_document(parent, free.stem().string(), created_path, error);
+}
+
+bool Project::create_untitled_folder(const fs::path& parent, fs::path& created_path,
+                                     std::string& error) const
+{
+    if (!contains(parent)) {
+        error = "target folder is outside the manuscript";
+        return false;
+    }
+
+    const fs::path free = unused_path(parent, UNTITLED_NAME, "");
+    return create_folder(parent, free.filename().string(), created_path, error);
+}
+
+bool Project::group_into_untitled_folder(const fs::path& item, fs::path& folder_path,
+                                         fs::path& moved_path,
+                                         std::string& error) const
+{
+    if (!contains(item)) {
+        error = "the item being grouped is outside the manuscript";
+        return false;
+    }
+
+    const fs::path free = unused_path(item.parent_path(), UNTITLED_NAME, "");
+    return group_into_new_folder(item, free.filename().string(), folder_path,
+                                 moved_path, error);
 }
 
 /* ── documents ──────────────────────────────────────────────────────────── */

@@ -419,6 +419,65 @@ void test_move_maintains_child_order()
           "move order: an unarranged folder stays free of a sidecar");
 }
 
+void test_create_untitled()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "untitled: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+
+    fs::path first;
+    check(project->create_untitled_document(manuscript, first, error),
+          "untitled: a document is created (" + error + ")");
+    check_equal(first.filename().string(), "Untitled.md",
+                "untitled: the first takes the plain name");
+
+    /* Twice over is the case that matters: an author who asks for two new
+     * documents before naming either must get two, not an error. */
+    fs::path second;
+    check(project->create_untitled_document(manuscript, second, error),
+          "untitled: a second document is created (" + error + ")");
+    check_equal(second.filename().string(), "Untitled-2.md",
+                "untitled: the second steps past the first");
+    check(fs::exists(first) && fs::exists(second),
+          "untitled: both are on disk");
+
+    fs::path folder;
+    check(project->create_untitled_folder(manuscript, folder, error),
+          "untitled: a folder is created (" + error + ")");
+    check_equal(folder.filename().string(), "Untitled",
+                "untitled: a folder gains no extension");
+
+    fs::path second_folder;
+    check(project->create_untitled_folder(manuscript, second_folder, error),
+          "untitled: a second folder is created (" + error + ")");
+    check_equal(second_folder.filename().string(), "Untitled-2",
+                "untitled: and steps past the first");
+
+    /* A document called Untitled.md and a folder called Untitled are different
+     * names, so neither pushes the other along. */
+    check(fs::is_regular_file(first) && fs::is_directory(folder),
+          "untitled: a document and a folder do not collide");
+
+    fs::path grouped_folder;
+    fs::path moved;
+    check(project->group_into_untitled_folder(first, grouped_folder, moved, error),
+          "untitled: an item is gathered into a new folder (" + error + ")");
+    check_equal(grouped_folder.filename().string(), "Untitled-3",
+                "untitled: the gathering folder takes a free name too");
+    check_equal(moved.string(), (grouped_folder / "Untitled.md").string(),
+                "untitled: and the item lands inside it");
+
+    fs::path outside;
+    check(!project->create_untitled_document(temp.path(), outside, error),
+          "untitled: refuses a folder outside the manuscript");
+}
+
 void test_rename_entry()
 {
     TempDir temp;
@@ -832,6 +891,7 @@ int main()
     test_move_beside_reorders();
     test_move_beside_across_folders();
     test_group_into_new_folder();
+    test_create_untitled();
     test_rename_entry();
     test_rename_keeps_its_place_in_the_order();
     test_trash_entry();
