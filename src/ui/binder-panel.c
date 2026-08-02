@@ -538,6 +538,45 @@ static void on_name_click(GtkGestureClick* gesture, int n_press, double x, doubl
     g_object_unref(item);
 }
 
+/* A press on the row whose name is being typed into, but not on the entry
+ * itself, is swallowed here — on the icon, the twist arrow, or the strip of row
+ * either side of the name.
+ *
+ * A list row takes the focus on every press it sees (`gtk_widget_grab_focus` in
+ * GtkListFactoryWidget's press handler), and taking it off the entry is what
+ * ends the edit. Clicking the icon of the very item being named is not an answer
+ * to the question the entry is asking, so the press does not get that far.
+ *
+ * Capture phase, from the list view inwards, because the row's own handler is
+ * what has to be headed off. A press inside the entry is let through: that is
+ * the author placing their cursor, and GtkText claims it before the row ever
+ * sees it. A press on any other row is let through too, and ends the edit the
+ * way clicking away always has. */
+static void on_row_press_while_renaming(GtkGestureClick* gesture, int n_press,
+                                        double x, double y, gpointer user_data)
+{
+    (void) n_press;
+
+    BinderPanel* binder = user_data;
+    if (binder->renaming_name_widget == NULL) {
+        return;
+    }
+
+    GtkWidget* picked = gtk_widget_pick(GTK_WIDGET(binder->list_view), x, y,
+                                        GTK_PICK_DEFAULT);
+    GtkWidget* row = row_widget_from(picked);
+    if (row == NULL || row_name(row) != binder->renaming_name_widget) {
+        return;
+    }
+
+    GtkWidget* name = GTK_WIDGET(binder->renaming_name_widget);
+    if (picked == name || gtk_widget_is_ancestor(picked, name)) {
+        return;
+    }
+
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
 /* Start the edit on the row showing `path`, if the list view has built one.
  * Rows are only widgets for what is on screen, so this answers no as readily as
  * yes and the caller decides what that is worth. */
@@ -1104,6 +1143,17 @@ BinderPanel* binder_panel_new(void)
     gtk_widget_set_parent(binder->context_menu, list_view);
     g_signal_connect_swapped(list_view, "destroy", G_CALLBACK(gtk_widget_unparent),
                              binder->context_menu);
+
+    /* Capture phase, for the same reason as the one below it: the rows would
+     * otherwise take the press first, and taking the focus with it is exactly
+     * what has to be headed off. */
+    GtkGesture* primary = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(primary), GDK_BUTTON_PRIMARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(primary),
+                                               GTK_PHASE_CAPTURE);
+    g_signal_connect(primary, "pressed", G_CALLBACK(on_row_press_while_renaming),
+                     binder);
+    gtk_widget_add_controller(list_view, GTK_EVENT_CONTROLLER(primary));
 
     /* Capture phase: the rows would otherwise take the press first. */
     GtkGesture* secondary = gtk_gesture_click_new();

@@ -481,6 +481,15 @@ means. Committing an empty name is the widget's business to allow and the
 panel's to refuse — a widget showing names has no business deciding that an
 empty one means something, so `on_name_editing_done()` puts the old name back.
 
+A press on the row being renamed, anywhere but the entry, is **swallowed**
+(`on_row_press_while_renaming`, a capture-phase gesture on the list view). A list
+row grabs the focus on every press it sees, and taking the focus off the entry is
+what ends an edit — so without this, clicking the icon of the very item being
+named commits the name and lights the row's keyboard focus ring. Presses inside
+the entry are let through (GtkText claims them first, to place the cursor), and
+so are presses on any other row, which end the edit the way clicking away always
+has.
+
 A newly created row has no widget yet — the file lands, the binder rebuilds, and
 the list view builds rows during its next layout — so `binder_panel_begin_rename()`
 leaves the request in `rename_when_bound` and `bind` picks it up when the row
