@@ -1,5 +1,7 @@
 #include "binder-panel.h"
 
+#include "editable-label.h"
+
 #include <string.h>
 
 /* ── model item ──────────────────────────────────────────────────────────── */
@@ -63,17 +65,11 @@ static BinderItem* binder_item_new(const WordsmithBinderNode* node)
 #define DROP_INTO_CLASS   "binder-drop-into"
 #define DROP_AFTER_CLASS  "binder-drop-below"
 
-/* A row's name is a GtkStack of the two ways to show it: a label, and an entry
- * while it is being renamed.
- *
- * GtkEditableLabel is this widget already, and is not used for two reasons. It
- * offers no way to ellipsize the label it shows, so a long chapter name would
- * make the whole binder scroll sideways; and it starts editing on a double
- * click, which is not the gesture wanted here — a slow second click on a row
- * that is already selected is. Both are in the way of behaviour this pane has
- * to get right, and neither is reachable from outside the widget. */
-#define NAME_PAGE_DISPLAY "display"
-#define NAME_PAGE_EDIT    "edit"
+/* A row's name is a WordsmithEditableLabel: the name, and an entry over it while
+ * it is being renamed. See editable-label.h for why that is not GtkEditableLabel
+ * itself. The panel keeps the gesture that starts an edit and what an accepted
+ * one means; the widget keeps the three ways out of one. */
+#define NAME_CLASS "binder-name"
 
 struct BinderPanel {
     GtkWidget*        root;   /* borrowed once parented into the window */
@@ -96,14 +92,15 @@ struct BinderPanel {
     BinderRenameFn rename_callback;
     void*          rename_user_data;
 
-    /* The edit in progress, or all NULL. The entry is borrowed and is what says
-     * *which* row is being renamed: rows are recycled as the list scrolls, so a
-     * path alone could not tell whether the widget still belongs to the item the
-     * author started editing. The two strings are what the edit is about, kept
-     * because the row they came from may be gone by the time it is accepted. */
-    GtkWidget*     renaming_entry;
-    char*          renaming_path;
-    char*          renaming_name;
+    /* The edit in progress, or all NULL. The name widget is borrowed and is what
+     * says *which* row is being renamed: rows are recycled as the list scrolls,
+     * so a path alone could not tell whether the widget still belongs to the item
+     * the author started editing. The two strings are what the edit is about,
+     * kept because the row they came from may be gone by the time it is
+     * accepted. */
+    WordsmithEditableLabel* renaming_name_widget;
+    char*                   renaming_path;
+    char*                   renaming_name;
 
     /* An edit asked for on a row the list view has not built yet. Creating an
      * item is the case: the file lands on disk, the binder rebuilds, and the row
@@ -151,28 +148,12 @@ static GtkWidget* row_widget_at(BinderPanel* binder, double x, double y)
     return row_widget_from(picked);
 }
 
-/* The three parts of a row's name, from the expander built in `setup`. */
-
-static GtkWidget* row_name_stack(GtkWidget* row)
+/* A row's name, from the expander built in `setup`. Borrowed. */
+static WordsmithEditableLabel* row_name(GtkWidget* row)
 {
     GtkWidget* box = gtk_tree_expander_get_child(GTK_TREE_EXPANDER(row));
-    return box != NULL ? gtk_widget_get_last_child(box) : NULL;
-}
-
-static GtkWidget* row_name_label(GtkWidget* row)
-{
-    GtkWidget* stack = row_name_stack(row);
-    return stack != NULL
-               ? gtk_stack_get_child_by_name(GTK_STACK(stack), NAME_PAGE_DISPLAY)
-               : NULL;
-}
-
-static GtkWidget* row_name_entry(GtkWidget* row)
-{
-    GtkWidget* stack = row_name_stack(row);
-    return stack != NULL
-               ? gtk_stack_get_child_by_name(GTK_STACK(stack), NAME_PAGE_EDIT)
-               : NULL;
+    GtkWidget* name = box != NULL ? gtk_widget_get_last_child(box) : NULL;
+    return name != NULL ? WORDSMITH_EDITABLE_LABEL(name) : NULL;
 }
 
 /* The BinderItem under (x, y) in list-view coordinates. Owned by the caller. */
@@ -445,38 +426,46 @@ static gboolean run_pending_rename(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-/* Close the edit in progress, keeping what was typed or throwing it away.
- *
- * The panel's record of the edit is cleared *first*, before anything that could
- * fire another signal: putting the label back takes the focus off the entry, and
- * the focus handler lands here too. Clearing first is what makes the second call
- * a no-op rather than a second rename. */
+/* Close the edit in progress, keeping what was typed or throwing it away. The
+ * name widget owns the three ways an author ends one; this is for the times the
+ * panel has to end one on their behalf, and it arrives back in the handler
+ * below by the same door they would have come through. */
 static void finish_rename(BinderPanel* binder, gboolean commit)
 {
-    if (binder->renaming_entry == NULL) {
-        return;
+    if (binder->renaming_name_widget != NULL) {
+        wordsmith_editable_label_stop_editing(binder->renaming_name_widget, commit);
+    }
+}
+
+/* An edit has ended, however it ended. The panel's record of it is cleared
+ * before the rename is asked for, since asking rebuilds the binder and takes
+ * this very row away. */
+static void on_name_editing_done(WordsmithEditableLabel* name, gboolean commit,
+                                 gpointer user_data)
+{
+    BinderPanel* binder = user_data;
+    if (binder->renaming_name_widget != name) {
+        return;   /* a row ending an edit the panel had already let go of */
     }
 
-    GtkWidget* entry = binder->renaming_entry;
-    char*      path  = binder->renaming_path;
-    char*      was   = binder->renaming_name;
+    char* path = binder->renaming_path;
+    char* was  = binder->renaming_name;
 
-    binder->renaming_entry = NULL;
-    binder->renaming_path  = NULL;
-    binder->renaming_name  = NULL;
+    binder->renaming_name_widget = NULL;
+    binder->renaming_path        = NULL;
+    binder->renaming_name        = NULL;
 
-    char* typed = g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry)));
+    const char* typed = wordsmith_editable_label_get_text(name);
 
-    GtkWidget* row = row_widget_from(entry);
-    if (row != NULL) {
-        gtk_stack_set_visible_child_name(GTK_STACK(row_name_stack(row)),
-                                         NAME_PAGE_DISPLAY);
-    }
-
-    /* An empty entry is a cancelled edit, not a request to be called nothing.
-     * The name it already had is not a rename either, and asking for one would
-     * cost a rebuild of the binder to arrive back where it started. */
-    if (commit && typed[0] != '\0' && g_strcmp0(typed, was) != 0) {
+    if (commit && typed[0] == '\0') {
+        /* An empty entry is a cancelled edit, not a request to be called
+         * nothing. The widget has already taken the empty name as the row's, so
+         * the one it had goes back — nothing else is going to put it there,
+         * since no rename means no rebuild. */
+        wordsmith_editable_label_set_text(name, was);
+    } else if (commit && g_strcmp0(typed, was) != 0) {
+        /* The name it already had is not a rename either, and asking for one
+         * would cost a rebuild of the binder to arrive back where it started. */
         PendingRename* rename = g_new0(PendingRename, 1);
         rename->binder = binder;
         rename->path   = g_strdup(path);
@@ -484,16 +473,14 @@ static void finish_rename(BinderPanel* binder, gboolean commit)
         g_idle_add(run_pending_rename, rename);
     }
 
-    g_free(typed);
     g_free(path);
     g_free(was);
 }
 
 static void start_rename(BinderPanel* binder, GtkWidget* row, BinderItem* item)
 {
-    GtkWidget* stack = row_name_stack(row);
-    GtkWidget* entry = row_name_entry(row);
-    if (stack == NULL || entry == NULL) {
+    WordsmithEditableLabel* name = row_name(row);
+    if (name == NULL) {
         return;
     }
 
@@ -501,61 +488,24 @@ static void start_rename(BinderPanel* binder, GtkWidget* row, BinderItem* item)
     finish_rename(binder, TRUE);
     g_clear_pointer(&binder->rename_when_bound, g_free);
 
-    binder->renaming_entry = entry;
-    binder->renaming_path  = g_strdup(item->path);
-    binder->renaming_name  = g_strdup(item->name);
+    binder->renaming_name_widget = name;
+    binder->renaming_path        = g_strdup(item->path);
+    binder->renaming_name        = g_strdup(item->name);
 
-    gtk_editable_set_text(GTK_EDITABLE(entry), item->name);
-    gtk_stack_set_visible_child_name(GTK_STACK(stack), NAME_PAGE_EDIT);
-
-    /* Selected whole, the way every rename in a file manager starts: the common
-     * case is replacing the name, and the author who wanted to amend it only has
-     * to press an arrow key first. */
-    gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
-    gtk_widget_grab_focus(entry);
-}
-
-static void on_name_entry_activate(GtkEntry* entry, gpointer user_data)
-{
-    (void) entry;
-    finish_rename(user_data, TRUE);
-}
-
-static gboolean on_name_entry_key(GtkEventControllerKey* controller, guint keyval,
-                                  guint keycode, GdkModifierType modifiers,
-                                  gpointer user_data)
-{
-    (void) controller;
-    (void) keycode;
-    (void) modifiers;
-
-    if (keyval != GDK_KEY_Escape) {
-        return GDK_EVENT_PROPAGATE;
-    }
-    finish_rename(user_data, FALSE);
-    return GDK_EVENT_STOP;
-}
-
-/* Clicking away keeps what was typed, which is what every list that renames in
- * place does, and what an author who has stopped looking at the entry means. */
-static void on_name_entry_focus_leave(GtkEventControllerFocus* controller,
-                                      gpointer user_data)
-{
-    BinderPanel* binder = user_data;
-    if (binder->renaming_entry
-        == gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller))) {
-        finish_rename(binder, TRUE);
-    }
+    wordsmith_editable_label_start_editing(name);
 }
 
 /* A click on the name of a row that was *already* selected opens the entry, the
  * way it does in the Finder.
  *
- * The gesture is on the label rather than on the row, so the icon and the
+ * The gesture is on the name rather than on the row, so the icon and the
  * expander's twist arrow are still ordinary places to click. It runs in the
- * bubble phase, from the label outwards, which puts it ahead of the list view's
+ * bubble phase, from the name outwards, which puts it ahead of the list view's
  * own handling of the press — so "already selected" means as of before this
- * click, which is exactly the question being asked. */
+ * click, which is exactly the question being asked.
+ *
+ * A click that lands in an entry already open is the author placing their
+ * cursor, and is left to do that. */
 static void on_name_click(GtkGestureClick* gesture, int n_press, double x, double y,
                           gpointer user_data)
 {
@@ -567,8 +517,12 @@ static void on_name_click(GtkGestureClick* gesture, int n_press, double x, doubl
         return;
     }
 
-    GtkWidget* label = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
-    GtkWidget* row   = row_widget_from(label);
+    GtkWidget* name = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+    if (wordsmith_editable_label_get_editing(WORDSMITH_EDITABLE_LABEL(name))) {
+        return;
+    }
+
+    GtkWidget* row   = row_widget_from(name);
     BinderItem* item = row != NULL ? row_item(row) : NULL;
     if (item == NULL) {
         return;
@@ -679,21 +633,9 @@ static void on_setup_row(GtkSignalListItemFactory* factory, GtkListItem* list_it
     GtkWidget* expander = gtk_tree_expander_new();
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     GtkWidget* icon = gtk_image_new();
-    GtkWidget* label = gtk_label_new(NULL);
-    GtkWidget* entry = gtk_entry_new();
-    GtkWidget* name = gtk_stack_new();
+    GtkWidget* name = wordsmith_editable_label_new();
 
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-
-    /* The entry asks for no width of its own, so opening it over a name does not
-     * shove the row wider than the pane it is in. */
-    gtk_editable_set_width_chars(GTK_EDITABLE(entry), 0);
-    gtk_editable_set_max_width_chars(GTK_EDITABLE(entry), 0);
-    gtk_widget_set_hexpand(entry, TRUE);
-
-    gtk_stack_add_named(GTK_STACK(name), label, NAME_PAGE_DISPLAY);
-    gtk_stack_add_named(GTK_STACK(name), entry, NAME_PAGE_EDIT);
+    gtk_widget_add_css_class(name, NAME_CLASS);
     gtk_widget_set_hexpand(name, TRUE);
 
     gtk_box_append(GTK_BOX(box), icon);
@@ -701,23 +643,15 @@ static void on_setup_row(GtkSignalListItemFactory* factory, GtkListItem* list_it
     gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), box);
     g_object_set_data(G_OBJECT(expander), ROW_LIST_ITEM_KEY, list_item);
 
-    /* Renaming: the click that opens the entry, and the three ways out of it.
-     * All of them are on the row's own widgets and read the panel's record of
-     * the edit rather than anything captured here, since rows are recycled. */
+    /* Renaming: the click that opens the entry, and word that one has closed.
+     * Both are on the row's own widgets and read the panel's record of the edit
+     * rather than anything captured here, since rows are recycled. */
     GtkGesture* name_click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(name_click), GDK_BUTTON_PRIMARY);
     g_signal_connect(name_click, "pressed", G_CALLBACK(on_name_click), user_data);
-    gtk_widget_add_controller(label, GTK_EVENT_CONTROLLER(name_click));
+    gtk_widget_add_controller(name, GTK_EVENT_CONTROLLER(name_click));
 
-    g_signal_connect(entry, "activate", G_CALLBACK(on_name_entry_activate), user_data);
-
-    GtkEventController* keys = gtk_event_controller_key_new();
-    g_signal_connect(keys, "key-pressed", G_CALLBACK(on_name_entry_key), user_data);
-    gtk_widget_add_controller(entry, keys);
-
-    GtkEventController* focus = gtk_event_controller_focus_new();
-    g_signal_connect(focus, "leave", G_CALLBACK(on_name_entry_focus_leave), user_data);
-    gtk_widget_add_controller(entry, focus);
+    g_signal_connect(name, "editing-done", G_CALLBACK(on_name_editing_done), user_data);
 
     /* Both controllers live on the row for as long as the list item does, and
      * read the item they are acting on out of it at the moment they fire —
@@ -758,7 +692,7 @@ static void on_bind_row(GtkSignalListItemFactory* factory, GtkListItem* list_ite
     gtk_image_set_from_icon_name(GTK_IMAGE(icon),
                                  item->is_folder ? "folder-symbolic"
                                                  : "text-x-generic-symbolic");
-    gtk_label_set_text(GTK_LABEL(row_name_label(expander)), item->name);
+    wordsmith_editable_label_set_text(row_name(expander), item->name);
 
     /* The row an edit was asked for before there was a row to ask about. */
     if (g_strcmp0(binder->rename_when_bound, item->path) == 0) {
@@ -781,7 +715,7 @@ static void on_unbind_row(GtkSignalListItemFactory* factory, GtkListItem* list_i
 
     BinderPanel* binder = user_data;
     GtkWidget* expander = gtk_list_item_get_child(list_item);
-    if (expander != NULL && binder->renaming_entry == row_name_entry(expander)) {
+    if (expander != NULL && binder->renaming_name_widget == row_name(expander)) {
         finish_rename(binder, TRUE);
     }
 }

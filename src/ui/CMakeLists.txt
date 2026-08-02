@@ -65,6 +65,7 @@ target_sources(wordsmith-ui PRIVATE
     menu-bar.c
     project-actions.c
     binder-panel.c
+    editable-label.c
     editor-panel.c
     format-bar.c
     inspector-panel.c

@@ -453,11 +453,33 @@ icon and the expander's twist arrow alone, and it sits in the bubble phase — s
 it runs before the list view moves the selection, and "already selected" means
 as of before this click, which is the question being asked.
 
-The name is a `GtkStack` of a label and an entry rather than a
+The name is a `WordsmithEditableLabel` (`editable-label.c`), not a
 `GtkEditableLabel`, which is this widget already. That type offers no way to
 ellipsize the label it shows, so one long chapter name would make the whole
 binder scroll sideways, and it starts editing on a double click, which is not
 the gesture wanted. Neither is reachable from outside the widget.
+
+Ours is a `GtkStack` of a `GtkLabel` and a **`GtkText`**, and the `GtkText` is
+the whole of why the name stays put when an edit opens over it: a `GtkEntry` is
+a frame, padding, a minimum height and a focus ring around a `GtkText`, so
+swapping one in shifts the name sideways and draws a box the size of the row
+around it. The stack is homogeneous, so the row does not change height either.
+
+The widget has a **CSS name of its own** and deliberately not
+`GtkEditableLabel`'s, which its nodes would otherwise match. A theme paints that
+widget like a field — the view background, the view's foreground colour — which
+in a sidebar row is a darker slab cut out of the list, and on a selected row
+fights the selection it sits inside. Under its own name the `text` node matches
+nothing a theme knows, and inherits the row's colour like any other label, so
+`.binder-name` in the stylesheet is the whole of the look: the same padding on
+both faces, and a selection washed in the text's own colour rather than the
+accent, which would be invisible on the row renaming always starts from.
+
+The widget owns the three ways *out* of an edit and reports each through
+`::editing-done`; the panel owns the gesture *in*, and what an accepted edit
+means. Committing an empty name is the widget's business to allow and the
+panel's to refuse — a widget showing names has no business deciding that an
+empty one means something, so `on_name_editing_done()` puts the old name back.
 
 A newly created row has no widget yet — the file lands, the binder rebuilds, and
 the list view builds rows during its next layout — so `binder_panel_begin_rename()`
@@ -467,11 +489,11 @@ the focus and swapping a stack page in the middle of the list view allocating it
 rows is asking for trouble. `binder_panel_select_path()` scrolls to the row it
 selects, which is what makes sure the row gets built at all.
 
-`finish_rename()` clears the panel's record of the edit **before** it puts the
-label back, because doing so takes the focus off the entry and the focus handler
-lands in the same function; clearing first is what makes the second call a
-no-op. Enter and clicking away both keep what was typed, Escape and any rebuild
-of the binder throw it away — a reload the author did not ask for is not their
+`wordsmith_editable_label_stop_editing()` drops the widget's own record of the
+edit **before** it puts the label back, because doing so takes the focus off the
+entry and the focus handler lands in the same function; clearing first is what
+makes the second call a no-op. Enter and clicking away both keep what was
+typed, Escape and any rebuild of the binder throw it away — a reload the author did not ask for is not their
 answer to the entry, which is why `binder_panel_reload()` cancels explicitly
 rather than leaving it to each row unbinding.
 

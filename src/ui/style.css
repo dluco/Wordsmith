@@ -89,6 +89,30 @@
     background-color: @view_bg_color;
 }
 
+/* A binder row's name, in both of its faces: the label it shows and the entry
+ * opened over it to rename it (editable-label.h). This is the whole of the
+ * look, since the widget's CSS name is its own and a theme has no rules for it.
+ *
+ * The same padding on both, because the name must not move when one face
+ * replaces the other. No background on the entry and no colour of its own: a
+ * row being renamed is the row it already was, and it goes on wearing whatever
+ * the list is dressing it in — the alternative is a slab in the view's colours
+ * cut out of the sidebar, which is what a theme would give it. The caret and
+ * the selected name are what say it is being typed into. */
+.binder-name > stack > label,
+.binder-name > stack > text {
+    padding: 0 2px;
+}
+
+/* A wash of the text's own colour, so the selection is visible on a selected
+ * row and an unselected one alike. An accent-coloured selection would be
+ * invisible on the row that is about to be renamed, since renaming starts on
+ * the selection. */
+.binder-name > stack > text > selection {
+    background-color: alpha(currentColor, 0.25);
+    color: inherit;
+}
+
 /* Binder drag feedback. A line along the edge the row would land against, or a
  * tinted row when the drop would put it inside that folder — so "between" and
  * "into" never look like the same gesture. */
