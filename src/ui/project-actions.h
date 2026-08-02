@@ -68,6 +68,15 @@ void project_actions_rename(WordsmithUiState* state, const char* path);
 void project_actions_rename_to(WordsmithUiState* state, const char* path,
                                const char* new_name);
 
+/** Ask, and then move the item at `path` into the project's trash.
+ *
+ *  Asking first, even though nothing is destroyed: the trash is a folder the
+ *  author has to go and find, and a chapter that leaves the binder without a
+ *  word is indistinguishable from one that was lost. Deleting is also the one
+ *  item command with no gesture to undo it — file operations are not on the undo
+ *  stack (see undo-stack.h) — so the question is the only chance to say no. */
+void project_actions_trash(WordsmithUiState* state, const char* path);
+
 /* The two halves of a binder drag. Both save first, since a move takes the
  * open document's path out from under the editor, and both leave the moved
  * item selected. */

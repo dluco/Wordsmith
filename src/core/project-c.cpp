@@ -323,6 +323,26 @@ int wordsmith_project_rename(WordsmithProject* project, const char* item_path,
     return 1;
 }
 
+int wordsmith_project_trash(WordsmithProject* project, const char* item_path,
+                             char** trashed_path, char** error)
+{
+    if (project == nullptr || item_path == nullptr) {
+        set_error(error, "missing argument");
+        return 0;
+    }
+
+    fs::path trashed;
+    std::string message;
+    if (!project->project->trash_entry(fs::path(item_path), trashed, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    if (trashed_path != nullptr) {
+        *trashed_path = duplicate(trashed.string());
+    }
+    return 1;
+}
+
 /* ── folder metadata ────────────────────────────────────────────────────── */
 
 char* wordsmith_folder_metadata_path(const char* folder_path)

@@ -665,6 +665,90 @@ bool Project::rename_entry(const fs::path& item, std::string_view new_name,
     return true;
 }
 
+namespace {
+
+/* `folder/<name>` while that is free, then `<stem>-2<ext>`, `<stem>-3<ext>` and
+ * so on. The counter goes before the extension so a trashed document is still a
+ * `.md` file that a file manager will open on a double click.
+ *
+ * Bounded rather than looping until it finds a gap: an `fs::exists` that keeps
+ * answering yes would otherwise spin forever. Past the cap the last candidate is
+ * handed back regardless, and the rename that follows fails with a real message
+ * about a real path — which is a better answer than a hang. */
+fs::path free_trash_name(const fs::path& folder, const fs::path& item,
+                         bool is_folder)
+{
+    constexpr int MAX_ATTEMPTS = 1000;
+
+    fs::path candidate = folder / item.filename();
+    std::error_code code;
+    if (!fs::exists(candidate, code)) {
+        return candidate;
+    }
+
+    const std::string stem = is_folder ? item.filename().string() : item.stem().string();
+    const std::string extension = is_folder ? std::string() : item.extension().string();
+
+    for (int counter = 2; counter < MAX_ATTEMPTS; counter++) {
+        candidate = folder / (stem + "-" + std::to_string(counter) + extension);
+        if (!fs::exists(candidate, code)) {
+            break;
+        }
+    }
+    return candidate;
+}
+
+} // namespace
+
+bool Project::trash_entry(const fs::path& item, fs::path& trashed_path,
+                          std::string& error) const
+{
+    if (!contains(item)) {
+        error = "the item being deleted is outside the manuscript";
+        return false;
+    }
+    if (paths_equal(item, manuscript_path())) {
+        error = "the manuscript folder cannot be deleted";
+        return false;
+    }
+
+    std::error_code code;
+    if (!fs::exists(item, code)) {
+        error = item.filename().string() + " is no longer there";
+        return false;
+    }
+    const bool is_folder = fs::is_directory(item, code);
+
+    /* The trash mirrors the project, so where the item sat is where it goes. */
+    const fs::path relative = fs::relative(item, root_, code);
+    if (code || relative.empty()) {
+        error = "cannot work out where " + item.filename().string()
+            + " sits in the project";
+        return false;
+    }
+
+    const fs::path destination =
+        root_ / PRIVATE_FOLDER_NAME / TRASH_FOLDER_NAME / relative.parent_path();
+    fs::create_directories(destination, code);
+    if (code) {
+        error = "cannot make room in the trash: " + code.message();
+        return false;
+    }
+
+    const fs::path target = free_trash_name(destination, item, is_folder);
+
+    fs::rename(item, target, code);
+    if (code) {
+        error = "cannot delete " + item.filename().string() + ": " + code.message();
+        return false;
+    }
+
+    forget_child(item.parent_path(), item.filename().string());
+
+    trashed_path = target;
+    return true;
+}
+
 bool Project::create_document(const fs::path& parent, std::string_view name,
                               fs::path& created_path, std::string& error) const
 {

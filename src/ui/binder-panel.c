@@ -813,6 +813,7 @@ static void show_context_menu(BinderPanel* binder, double x, double y,
 
         GMenu* item_section = g_menu_new();
         append_targeted(item_section, "Rename", "win.rename-item", item_path);
+        append_targeted(item_section, "Move to Trash", "win.trash-item", item_path);
         g_menu_append_section(model, NULL, G_MENU_MODEL(item_section));
         g_object_unref(item_section);
     }

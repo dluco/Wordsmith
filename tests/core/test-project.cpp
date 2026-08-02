@@ -522,6 +522,124 @@ void test_rename_keeps_its_place_in_the_order()
           "rename order: an unarranged folder stays free of a sidecar");
 }
 
+void test_trash_entry()
+{
+    TempDir temp;
+    const fs::path root = temp.path() / "book";
+    std::string error;
+    auto project = wordsmith::Project::create(root, "Book", error);
+    if (project == nullptr) {
+        check(false, "trash: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path act;
+    project->create_folder(manuscript, "act-one", act, error);
+    fs::path scene;
+    project->create_document(act, "scene", scene, error);
+    wordsmith::write_document(scene, "The words.\n", error);
+
+    fs::path trashed;
+    check(project->trash_entry(scene, trashed, error),
+          "trash: a document is trashed (" + error + ")");
+    check(!fs::exists(scene), "trash: it leaves the manuscript");
+
+    /* The trash mirrors the project, so the path says where it came from. */
+    const fs::path expected =
+        root / ".wordsmith" / "trash" / "manuscript" / "act-one" / "scene.md";
+    check_equal(trashed.string(), expected.string(),
+                "trash: it lands under the mirrored path");
+
+    std::string contents;
+    check(wordsmith::read_document(trashed, contents, error),
+          "trash: the trashed document is readable");
+    check_equal(contents, "The words.\n", "trash: the words are kept whole");
+
+    /* The binder is a directory scan, so a trashed document is simply not there
+     * — and the trash is inside a dotted folder, so it is not scanned either. */
+    check(wordsmith::load_binder(act).children.empty(),
+          "trash: the binder no longer shows it");
+    const wordsmith::BinderEntry from_root = wordsmith::load_binder(project->root());
+    check(from_root.children.size() == 1
+              && from_root.children[0].name == "manuscript",
+          "trash: and the trash folder itself is not scanned in");
+
+    fs::path folder_trashed;
+    check(project->trash_entry(act, folder_trashed, error),
+          "trash: a folder is trashed (" + error + ")");
+    check(!fs::exists(act), "trash: the folder leaves the manuscript");
+    check(fs::is_directory(folder_trashed), "trash: and arrives as a folder");
+
+    check(!project->trash_entry(manuscript, folder_trashed, error),
+          "trash: refuses the manuscript folder");
+    check(!project->trash_entry(temp.path() / "outside.md", folder_trashed, error),
+          "trash: refuses a path outside the manuscript");
+}
+
+void test_trash_keeps_both_of_a_shared_name()
+{
+    TempDir temp;
+    const fs::path root = temp.path() / "book";
+    std::string error;
+    auto project = wordsmith::Project::create(root, "Book", error);
+    if (project == nullptr) {
+        check(false, "trash names: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+
+    fs::path first;
+    project->create_document(manuscript, "chapter", first, error);
+    wordsmith::write_document(first, "First.\n", error);
+    fs::path first_trashed;
+    project->trash_entry(first, first_trashed, error);
+
+    /* The same name again: the second must not overwrite the first, or deleting
+     * two false starts would leave one of them gone for good. */
+    fs::path second;
+    project->create_document(manuscript, "chapter", second, error);
+    wordsmith::write_document(second, "Second.\n", error);
+    fs::path second_trashed;
+    check(project->trash_entry(second, second_trashed, error),
+          "trash names: the second is trashed too (" + error + ")");
+    check_equal(second_trashed.filename().string(), "chapter-2.md",
+                "trash names: the counter goes before the extension");
+
+    std::string contents;
+    wordsmith::read_document(first_trashed, contents, error);
+    check_equal(contents, "First.\n", "trash names: the first is still there");
+    wordsmith::read_document(second_trashed, contents, error);
+    check_equal(contents, "Second.\n", "trash names: and so is the second");
+}
+
+void test_trash_leaves_the_child_order()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "trash order: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path first;
+    fs::path second;
+    project->create_document(manuscript, "first", first, error);
+    project->create_document(manuscript, "second", second, error);
+    project->set_child_order(manuscript, { "first.md", "second.md" }, error);
+
+    fs::path trashed;
+    check(project->trash_entry(first, trashed, error),
+          "trash order: the item is trashed (" + error + ")");
+
+    const std::vector<std::string> order = wordsmith::read_child_order(manuscript);
+    check(order.size() == 1 && order[0] == "second.md",
+          "trash order: the folder forgets what has gone and keeps the rest");
+}
+
 /* The names of a folder's children in the order the binder would show them. */
 std::string binder_order_of(const fs::path& folder)
 {
@@ -716,6 +834,9 @@ int main()
     test_group_into_new_folder();
     test_rename_entry();
     test_rename_keeps_its_place_in_the_order();
+    test_trash_entry();
+    test_trash_keeps_both_of_a_shared_name();
+    test_trash_leaves_the_child_order();
     test_document_read_write();
     test_sanitize_name();
 

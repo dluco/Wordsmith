@@ -689,3 +689,127 @@ void project_actions_rename_to(WordsmithUiState* state, const char* path,
     wordsmith_free_string(renamed);
     g_free(was_open);
 }
+
+/* ── deleting items ──────────────────────────────────────────────────────── */
+
+/* Whether `path` is `item` itself or something inside it. Trashing a folder
+ * takes everything under it, so the document the editor is holding may be going
+ * without being named. */
+static gboolean path_is_within(const char* path, const char* item)
+{
+    if (path == NULL || item == NULL) {
+        return FALSE;
+    }
+    if (g_strcmp0(path, item) == 0) {
+        return TRUE;
+    }
+
+    char* prefix = g_strconcat(item, G_DIR_SEPARATOR_S, NULL);
+    const gboolean within = g_str_has_prefix(path, prefix);
+    g_free(prefix);
+    return within;
+}
+
+static void trash_confirmed(WordsmithUiState* state, const char* path)
+{
+    /* Committed first for the reason every move commits first, and then thrown
+     * away with the file if it was this one: the words the author typed go into
+     * the trashed copy rather than being lost on the way there. */
+    char* was_open = save_and_remember_open(state);
+    char* was_selected = binder_panel_selected_path(state->binder);
+
+    char* trashed = NULL;
+    char* error = NULL;
+    if (!wordsmith_project_trash(state->project, path, &trashed, &error)) {
+        ui_state_report_error(state, "Could not move the item to the trash", error);
+        g_free(was_open);
+        g_free(was_selected);
+        return;
+    }
+
+    if (path_is_within(was_open, path)) {
+        editor_panel_close(state->editor);
+    }
+    /* The pane follows the selection, and what it was following has gone. */
+    if (path_is_within(was_selected, path) || path_is_within(was_open, path)) {
+        inspector_panel_clear(state->inspector);
+    }
+
+    /* The history of something that is not in the binder any more is not
+     * reachable and not worth keeping. Undo cannot bring the file back — that is
+     * what the trash is for — so there is nothing here to protect. */
+    undo_store_forget(state->undo, path);
+
+    ui_state_reload_project(state);
+    ui_state_update_title(state);
+    ui_state_remember_session(state);
+    ui_state_undo_changed(state);
+
+    wordsmith_free_string(trashed);
+    g_free(was_open);
+    g_free(was_selected);
+}
+
+/* The question and its answer, since the dialog outlives the call that raised
+ * it. `path` is copied for the same reason the name prompt copies its target. */
+typedef struct TrashPrompt {
+    WordsmithUiState* state;
+    char*             path;   /* owned */
+} TrashPrompt;
+
+static void on_trash_answered(GObject* source, GAsyncResult* result,
+                              gpointer user_data)
+{
+    TrashPrompt* prompt = user_data;
+    GError* error = NULL;
+
+    const int chosen = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source),
+                                                      result, &error);
+    /* Dismissing the dialog — Escape, or the window manager — is a no, and
+     * arrives here as an error rather than as a button. */
+    if (error == NULL && chosen == 1) {
+        trash_confirmed(prompt->state, prompt->path);
+    }
+    g_clear_error(&error);
+
+    g_free(prompt->path);
+    g_free(prompt);
+}
+
+void project_actions_trash(WordsmithUiState* state, const char* path)
+{
+    if (state->project == NULL || path == NULL) {
+        return;
+    }
+
+    char* name = g_path_get_basename(path);
+    const gboolean is_folder = g_file_test(path, G_FILE_TEST_IS_DIR);
+
+    char* question = g_strdup_printf("Move “%s” to the trash?", name);
+
+    GtkAlertDialog* dialog = gtk_alert_dialog_new("%s", question);
+    gtk_alert_dialog_set_detail(
+        dialog,
+        is_folder
+            ? "The folder and everything in it are kept in the project's trash "
+              "folder until you empty it by hand."
+            : "It is kept in the project's trash folder until you empty it by "
+              "hand.");
+
+    const char* buttons[] = { "Cancel", "Move to Trash", NULL };
+    gtk_alert_dialog_set_buttons(dialog, buttons);
+    /* Cancel is both the default and what a dismissal means, so the answer that
+     * costs nothing is the one a reflex gives. */
+    gtk_alert_dialog_set_cancel_button(dialog, 0);
+    gtk_alert_dialog_set_default_button(dialog, 0);
+
+    TrashPrompt* prompt = g_new0(TrashPrompt, 1);
+    prompt->state = state;
+    prompt->path  = g_strdup(path);
+
+    gtk_alert_dialog_choose(dialog, state->window, NULL, on_trash_answered, prompt);
+
+    g_object_unref(dialog);
+    g_free(question);
+    g_free(name);
+}

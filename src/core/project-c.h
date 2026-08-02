@@ -105,6 +105,12 @@ int wordsmith_project_rename(WordsmithProject* project, const char* item_path,
                               const char* new_name, char** renamed_path,
                               char** error);
 
+/** Move the item at `item_path` into the project's trash, under
+ *  `.wordsmith/trash/`, where it stays until swept by hand. On success
+ *  `trashed_path`, if non-NULL, receives where it landed. */
+int wordsmith_project_trash(WordsmithProject* project, const char* item_path,
+                             char** trashed_path, char** error);
+
 /* ── folder metadata ────────────────────────────────────────────────────── */
 
 /** Where `folder_path` keeps its sidecar of fields and child order. The file

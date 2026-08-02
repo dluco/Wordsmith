@@ -49,6 +49,12 @@ inline constexpr const char* DOCUMENT_EXTENSION = ".md";
  * The list is a hint, never an authority — see `load_binder`. */
 inline constexpr const char* FOLDER_METADATA_FILE_NAME = "metadata.yaml";
 
+/* Where a deleted item goes, inside the `PRIVATE_FOLDER_NAME` directory that
+ * `snapshots.hpp` declares and describes. Both of the things Wordsmith keeps on
+ * an author's behalf sit under that one hidden folder, so what they cost can be
+ * seen and swept in one place. */
+inline constexpr const char* TRASH_FOLDER_NAME = "trash";
+
 /** One node in the binder tree. Folders carry children; documents do not. */
 struct BinderEntry {
     std::string              name;       // display name: filename stem, or folder name
@@ -209,6 +215,30 @@ public:
      *  moving one has, and for the same reason. See `snapshots.hpp`. */
     bool rename_entry(const std::filesystem::path& item, std::string_view new_name,
                       std::filesystem::path& renamed_path, std::string& error) const;
+
+    /** Move `item` into the project's trash, reporting where it landed through
+     *  `trashed_path`.
+     *
+     *  Deleting is a move, never an `unlink`. The author is deleting a piece of
+     *  their own manuscript, and the cost of being wrong is the whole of it,
+     *  against a few kilobytes for being right — the same trade `snapshots.hpp`
+     *  makes, settled the same way.
+     *
+     *  The trash mirrors the project's layout under `.wordsmith/trash/`, so a
+     *  document deleted from `manuscript/act-one/` is at
+     *  `.wordsmith/trash/manuscript/act-one/` under its own name. Mirrored
+     *  rather than hashed or flattened for the reason snapshots are: the path
+     *  itself records where the thing came from, and an author can find it with
+     *  a file manager and no help from us. A name already taken there gains a
+     *  `-2`, `-3` and so on before its extension, so deleting two chapters that
+     *  happened to share a name keeps both.
+     *
+     *  Nothing sweeps the trash. A cap would mean silently destroying something
+     *  the author was told was recoverable, which is worse than the disk it
+     *  costs; it is emptied by hand, in the one place everything else Wordsmith
+     *  keeps is. Does not rescan. */
+    bool trash_entry(const std::filesystem::path& item,
+                     std::filesystem::path& trashed_path, std::string& error) const;
 
     /** True if `path` lies inside the manuscript folder. Guards the mutating
      *  calls above against a caller passing an arbitrary path. */

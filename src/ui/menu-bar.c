@@ -102,8 +102,15 @@ static void on_rename_item(GSimpleAction* action, GVariant* param, gpointer user
     project_actions_rename(user, g_variant_get_string(param, NULL));
 }
 
-/* The untargeted form: the item the author is looking at, which is the binder's
+static void on_trash_item(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    project_actions_trash(user, g_variant_get_string(param, NULL));
+}
+
+/* The untargeted forms: the item the author is looking at, which is the binder's
  * selection — the same thing Ctrl+Z addresses, and for the same reason. */
+
 static void on_rename(GSimpleAction* action, GVariant* param, gpointer user)
 {
     (void) action;
@@ -113,6 +120,19 @@ static void on_rename(GSimpleAction* action, GVariant* param, gpointer user)
     char* selected = binder_panel_selected_path(state->binder);
     if (selected != NULL) {
         project_actions_rename(state, selected);
+    }
+    g_free(selected);
+}
+
+static void on_trash(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+    (void) param;
+
+    WordsmithUiState* state = user;
+    char* selected = binder_panel_selected_path(state->binder);
+    if (selected != NULL) {
+        project_actions_trash(state, selected);
     }
     g_free(selected);
 }
@@ -309,6 +329,11 @@ static const ActionSpec ACTIONS[] = {
      * outranks the editor's own bindings, so a letter here would be a letter the
      * author could no longer type. */
     { "rename",           G_CALLBACK(on_rename),           "F2"                },
+    /* No chord for this one, deliberately. Delete is the key it would want, and
+     * an accelerator outranks GtkTextView's own bindings — binding it would take
+     * the Delete key away from the manuscript to give a menu item a shortcut,
+     * which is a bad trade at any price. */
+    { "trash",            G_CALLBACK(on_trash),            NULL                },
 
     /* Insert */
     { "new-text",         G_CALLBACK(on_new_text),         "<Control>t"        },
@@ -346,6 +371,7 @@ static const ActionSpec TARGETED_ACTIONS[] = {
     { "new-folder-in",              G_CALLBACK(on_new_folder_in),              NULL },
     { "new-folder-with-selection",  G_CALLBACK(on_new_folder_with_selection),  NULL },
     { "rename-item",                G_CALLBACK(on_rename_item),                NULL },
+    { "trash-item",                 G_CALLBACK(on_trash_item),                 NULL },
 };
 
 /* Stateful toggles: boolean state, no parameter, and an initial state that says
@@ -488,6 +514,7 @@ static GMenuModel* build_menu_model(GMenu** undo_section_out)
      * that, which is what a menu bar is for. */
     GMenu* item_section = g_menu_new();
     g_menu_append(item_section, "Rename", "win.rename");
+    g_menu_append(item_section, "Move to Trash", "win.trash");
     g_menu_append_section(edit_menu, NULL, G_MENU_MODEL(item_section));
     g_object_unref(item_section);
 

@@ -62,12 +62,18 @@
  *
  * ## What is not here yet
  *
- * File operations: create, rename, move, drag-reorder, group, and the delete
- * that does not exist as a command yet. Adding one is a new UndoKind and a new
- * arm in undo_record_apply(), not a redesign — the store is already keyed by
- * binder path. What holds them back is the question they raise and text edits do
- * not: what undo should do when the file has changed on disk since the record
- * was made.
+ * File operations: create, rename, move, drag-reorder, group and delete. Adding
+ * one is a new UndoKind and a new arm in undo_record_apply(), not a redesign —
+ * the store is already keyed by binder path. What holds them back is the
+ * question they raise and text edits do not: what undo should do when the file
+ * has changed on disk since the record was made.
+ *
+ * Deleting is the one that needs it least, and that is deliberate rather than
+ * lucky: it moves the item into the project's trash rather than unlinking it, so
+ * what an undo would be for is already sitting on disk under a path that says
+ * where it came from. A history belonging to something trashed is dropped
+ * (undo_store_forget), because a history that cannot put the file back is not
+ * one an author can use.
  *
  * Renaming has a second question behind that one. A history is keyed by path, so
  * the one belonging to a renamed document is left under a name nothing selects

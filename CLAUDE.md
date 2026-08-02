@@ -419,10 +419,11 @@ reports what is in force rather than deciding it, the way
 place, so the item is replaced.
 
 **File operations are not on the stack yet** — create, rename, move,
-drag-reorder, group, and the delete that does not exist as a command. Adding one
-is a new `UndoKind` and an arm in `undo_record_apply()`, not a redesign. What
-holds them back is the question text edits do not raise: what undo should do
-when the file has changed on disk since the record was made.
+drag-reorder, group and delete. Adding one is a new `UndoKind` and an arm in
+`undo_record_apply()`, not a redesign. What holds them back is the question text
+edits do not raise: what undo should do when the file has changed on disk since
+the record was made. Deleting needs it least by design rather than by luck: the
+file is in the trash, not gone.
 
 ### Renaming
 
@@ -454,6 +455,38 @@ filenames, and the `title` in a document's frontmatter is a separate thing left
 alone. Where the parent records an order the item **keeps its place** in it,
 through `rename_child()` — forgetting the old name and remembering the new one
 is a move, and fixing a typo in chapter three should not send it to the end.
+
+### Deleting
+
+**Deleting is a move, never an `unlink`.** `Project::trash_entry()` puts the item
+under `.wordsmith/trash/`, beside the snapshots and inside the same hidden
+folder, so what Wordsmith keeps on the author's behalf costs disk in one place
+and is swept in one place. The trash **mirrors the project's layout**, for the
+reason snapshots do: the path itself records where the thing came from, and it
+can be found with a file manager and no help from us. A name already taken gains
+a `-2` before its extension, so deleting two false starts that shared a name
+keeps both.
+
+Nothing sweeps the trash. A cap here would mean silently destroying something the
+author was told was recoverable, which is worse than the disk it costs.
+
+It still asks first. Nothing is destroyed, but the trash is a folder they have to
+go and find, and a chapter that leaves the binder without a word is
+indistinguishable from one that was lost. Cancel is both the default and what
+dismissing the dialog means, so the answer that costs nothing is the one a reflex
+gives.
+
+`win.trash` has **no accelerator**, deliberately. Delete is the key it would
+want, and an application accelerator outranks `GtkTextView`'s own bindings — the
+same rule that makes the Edit menu drive the buffer itself for cut, copy and
+paste. Binding it would take the Delete key away from the manuscript to give a
+menu item a shortcut.
+
+`project_actions_trash()` commits the editor first, the way every move does, so
+the words just typed go into the trashed copy rather than being lost on the way
+there. Trashing a folder takes what is inside it, so the editor and inspector are
+closed when what they were showing is the item **or anything under it**, and the
+item's undo history goes with it.
 
 ### UI wiring
 
