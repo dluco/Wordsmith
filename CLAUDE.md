@@ -382,13 +382,16 @@ nothing reports an error. That is the same trade `preferences.cpp` makes.
 
 Three things are deliberately not marked, and each is a false mark avoided:
 
-- **The word the cursor is in.** Without it every word flashes red while it is
-  being typed. `spell_check_cursor_in_word()` is the display-free seam, and its
-  asymmetry is the subtle part: the **trailing** edge counts because the cursor
-  sits at the end of a word for as long as it takes to type one, and the
-  **leading** edge does not because a freshly opened document leaves the cursor
-  at offset 0 — counting it would make the first word of every manuscript the
-  one word never checked.
+- **The word being typed.** Without it every word flashes red while it is being
+  written. `spell_check_word_being_typed()` is the display-free seam, and it
+  asks two questions rather than one. The cursor has to be *in* the word, and
+  the text has to have been last edited *where the cursor now is* — otherwise a
+  click into a misspelling takes its own mark off, which answers the question
+  the author clicked to ask by hiding it. Within the first, the asymmetry is the
+  subtle part: the **trailing** edge counts because the cursor sits at the end
+  of a word for as long as it takes to type one, and the **leading** edge does
+  not because deleting the word in front of the cursor leaves it there having
+  written nothing.
 - **Anything wearing a tag given to `spell_check_skip_tag()`** — the editor
   hands it the two code tags.
 - **Everything**, when the preference is off.
@@ -411,6 +414,36 @@ squiggle under half of it would save as `**wo****rd**` — the same words, and a
 diff in the author's file every time they opened it. **Any future tag that is
 decoration rather than markup inherits this**: it is safe because the span
 walk coalesces, not because the tag was careful.
+
+A right click on a marked word offers what it might have been, and the two ways
+of saying it is a word: **Ignore All** for this sitting (`accept()`) and **Add
+to Dictionary** for good (`remember()`). GTK4 has nothing like GTK3's
+`populate-popup`, so the menu cannot be built as it opens — it has to be *ready
+before* the press reaches `GtkTextView`. A secondary-click gesture in the
+**capture** phase is what allows that: the view adds its own click gesture in
+the bubble phase, so ours runs first, fills the offer in, and does not claim the
+press. `gtk_text_view_set_extra_menu()` joins the model onto the **end** of the
+view's own menu, so the items land under its cut and paste, and the section
+carries the word as its heading.
+
+The model is handed over **once and mutated from then on**. GTK builds the
+popover the first time it is needed, keeps it, and tracks the model's
+`items-changed`; handing over a fresh model instead throws that popover away,
+which from an item's own handler would pull the menu out from under the click
+that chose it. Because filling and emptying one `GMenu` is free of that hazard,
+the offer is **withdrawn whenever the cursor leaves** — the same menu opens from
+the keyboard (Menu, Shift+F10) with nothing able to prepare it, and one offering
+to correct a word elsewhere on the page is worse than one offering nothing.
+`choosing` is the guard that stops a correction's own edit from withdrawing the
+menu mid-click. `spell_check_fill_menu()` is the display-free seam; the gesture
+that shows it is not testable headless.
+
+The menu names actions in a `spelling` group the marker installs **on the
+view**, not window actions like the binder's context menu — those verbs move
+files and open dialogs, these three change one word in one buffer. A correction
+reaches the buffer as a plain delete and insert, so the editor's own handlers
+record it, mark the document modified and recheck the line — two undo records
+rather than one, which a compound record in `undo-stack.h` would fix.
 
 `SpellChecker::accept()` is the seam the manuscript's own vocabulary will arrive
 through — a novel is full of names that are spelled right and are in no

@@ -87,17 +87,27 @@ static gboolean dictionary_installed(void)
 /* The trailing edge counts and the leading one does not, and both halves of
  * that matter. The cursor sits at the end of a word for as long as it takes to
  * type one; it sits at the start of one without anything having been typed
- * there, which is where a freshly opened document leaves it. */
+ * there, which is where deleting the word in front of it leaves it. */
 static void test_the_word_being_typed_is_the_one_at_the_cursor(void)
 {
-    /* "hello" at offsets 4 to 9. */
-    g_assert_true(spell_check_cursor_in_word(9, 4, 9));   /* just typed the "o" */
-    g_assert_true(spell_check_cursor_in_word(6, 4, 9));   /* standing inside it */
-    g_assert_true(spell_check_cursor_in_word(5, 4, 9));   /* one character in */
+    /* "hello" at offsets 4 to 9, with the text last edited where the cursor
+     * stands — which is what typing it looks like. */
+    g_assert_true(spell_check_word_being_typed(9, 9, 4, 9));  /* typed the "o" */
+    g_assert_true(spell_check_word_being_typed(6, 6, 4, 9));  /* inside it */
+    g_assert_true(spell_check_word_being_typed(5, 5, 4, 9));  /* one character in */
 
-    g_assert_false(spell_check_cursor_in_word(4, 4, 9));  /* in front of it */
-    g_assert_false(spell_check_cursor_in_word(10, 4, 9)); /* past the end */
-    g_assert_false(spell_check_cursor_in_word(0, 4, 9));  /* nowhere near */
+    g_assert_false(spell_check_word_being_typed(4, 4, 4, 9));   /* in front of it */
+    g_assert_false(spell_check_word_being_typed(10, 10, 4, 9)); /* past the end */
+    g_assert_false(spell_check_word_being_typed(0, 0, 4, 9));   /* nowhere near */
+}
+
+/* A cursor that arrived rather than wrote leaves the word alone. Clicking into
+ * a misspelling is the author asking about the mark, and taking it off under
+ * the pointer answers by hiding the question. */
+static void test_a_cursor_that_typed_nothing_leaves_the_mark(void)
+{
+    g_assert_false(spell_check_word_being_typed(6, 22, 4, 9));  /* clicked into it */
+    g_assert_false(spell_check_word_being_typed(9, -1, 4, 9));  /* nothing typed yet */
 }
 
 /* The top of a document is offset 0, so a word starting there must still be
@@ -105,7 +115,7 @@ static void test_the_word_being_typed_is_the_one_at_the_cursor(void)
  * manuscript as the one word never looked at. */
 static void test_the_first_word_of_a_document_is_checked(void)
 {
-    g_assert_false(spell_check_cursor_in_word(0, 0, 5));
+    g_assert_false(spell_check_word_being_typed(0, 0, 0, 5));
 }
 
 /* ── the marking ─────────────────────────────────────────────────────────── */
@@ -247,6 +257,182 @@ static void test_text_wearing_a_skipped_tag_is_not_checked(void)
     fixture_clear(&fixture);
 }
 
+/* The bug the cursor rule caused before it asked where the text was last
+ * edited: clicking on a marked word took its mark off, so the one gesture an
+ * author makes to ask about a misspelling made it disappear. */
+static void test_clicking_a_marked_word_keeps_its_mark(void)
+{
+    if (!dictionary_installed()) {
+        g_test_skip("no dictionary installed");
+        return;
+    }
+
+    Fixture fixture;
+    fixture_init(&fixture, "");
+
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(fixture.buffer, &end);
+    gtk_text_buffer_insert(fixture.buffer, &end, "qwertzuiop here", -1);
+
+    /* Away from it, so it is finished and marked. */
+    place_cursor(&fixture, 15);
+    g_assert_true(only_marked(&fixture, 0, 10));
+
+    /* And back into the middle of it, the way a click does. */
+    place_cursor(&fixture, 5);
+    g_assert_true(only_marked(&fixture, 0, 10));
+
+    /* Typing there is a word in progress again, and the mark comes off. */
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_offset(fixture.buffer, &at, 5);
+    gtk_text_buffer_insert(fixture.buffer, &at, "x", -1);
+    g_assert_true(nothing_marked(&fixture));
+
+    fixture_clear(&fixture);
+}
+
+/* ── the menu over a misspelling ─────────────────────────────────────────── */
+
+/* A GMenuModel is a GLib object, so what a right click offers can be read
+ * without a display. What cannot be is the gesture that shows it, which is why
+ * the model is built apart from it. */
+static GMenuModel* section_of(GMenuModel* menu, int index)
+{
+    GMenuModel* section = g_menu_model_get_item_link(menu, index, G_MENU_LINK_SECTION);
+    g_assert_nonnull(section);
+    return section;
+}
+
+static void test_the_menu_offers_the_corrections(void)
+{
+    const char* const corrections[] = { "hello", "hallo", "hell" };
+    GMenu*      filled = g_menu_new();
+    GMenuModel* menu   = G_MENU_MODEL(filled);
+    spell_check_fill_menu(filled, "helo", corrections, 3);
+
+    /* The word it is about, then the corrections, then the dictionary. */
+    g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 2);
+
+    char* heading = NULL;
+    g_assert_true(g_menu_model_get_item_attribute(menu, 0, G_MENU_ATTRIBUTE_LABEL,
+                                                  "s", &heading));
+    g_assert_cmpstr(heading, ==, "helo");
+    g_free(heading);
+
+    GMenuModel* offered = section_of(menu, 0);
+    g_assert_cmpint(g_menu_model_get_n_items(offered), ==, 3);
+
+    for (int index = 0; index < 3; index++) {
+        char* label = NULL;
+        char* action = NULL;
+        GVariant* target = NULL;
+
+        g_assert_true(g_menu_model_get_item_attribute(offered, index,
+                                                      G_MENU_ATTRIBUTE_LABEL, "s",
+                                                      &label));
+        g_assert_true(g_menu_model_get_item_attribute(offered, index,
+                                                      G_MENU_ATTRIBUTE_ACTION, "s",
+                                                      &action));
+        target = g_menu_model_get_item_attribute_value(
+            offered, index, G_MENU_ATTRIBUTE_TARGET, G_VARIANT_TYPE_STRING);
+
+        g_assert_cmpstr(label, ==, corrections[index]);
+        g_assert_cmpstr(action, ==, "spelling.correct");
+        g_assert_nonnull(target);
+        /* The replacement travels with the item, so nothing has to be kept on
+         * the side and looked up again when it is chosen. */
+        g_assert_cmpstr(g_variant_get_string(target, NULL), ==, corrections[index]);
+
+        g_free(label);
+        g_free(action);
+        g_variant_unref(target);
+    }
+
+    GMenuModel* dictionary = section_of(menu, 1);
+    g_assert_cmpint(g_menu_model_get_n_items(dictionary), ==, 2);
+
+    g_object_unref(offered);
+    g_object_unref(dictionary);
+    g_object_unref(menu);
+}
+
+/* A right click that opens nothing looks like a fault, so a word the dictionary
+ * has no idea about still gets a menu that says so. */
+static void test_a_word_with_nothing_to_offer_still_gets_a_menu(void)
+{
+    GMenu* filled = g_menu_new();
+    spell_check_fill_menu(filled, "qwertzuiop", NULL, 0);
+
+    GMenuModel* menu    = G_MENU_MODEL(filled);
+    GMenuModel* offered = section_of(menu, 0);
+
+    g_assert_cmpint(g_menu_model_get_n_items(offered), ==, 1);
+
+    char* action = NULL;
+    g_assert_true(g_menu_model_get_item_attribute(offered, 0, G_MENU_ATTRIBUTE_ACTION,
+                                                  "s", &action));
+    /* An action that is never enabled, so the item is greyed rather than gone. */
+    g_assert_cmpstr(action, ==, "spelling.no-suggestions");
+    g_free(action);
+
+    /* And a word can still be accepted, which is the point of the menu for a
+     * character's name. */
+    GMenuModel* dictionary = section_of(menu, 1);
+    g_assert_cmpint(g_menu_model_get_n_items(dictionary), ==, 2);
+
+    g_object_unref(offered);
+    g_object_unref(dictionary);
+    g_object_unref(menu);
+}
+
+/* A dictionary will give twenty variations on one typo. A menu is a list to be
+ * read at a glance, so only the first few are offered. */
+static void test_only_the_first_corrections_are_offered(void)
+{
+    const char* const corrections[] = {
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
+    };
+    GMenu* filled = g_menu_new();
+    spell_check_fill_menu(filled, "x", corrections, G_N_ELEMENTS(corrections));
+
+    GMenuModel* menu    = G_MENU_MODEL(filled);
+    GMenuModel* offered = section_of(menu, 0);
+
+    g_assert_cmpint(g_menu_model_get_n_items(offered), ==, 8);
+
+    g_object_unref(offered);
+    g_object_unref(menu);
+}
+
+/* The same menu is handed to the view once and filled from then on — GTK builds
+ * its popover from the model and follows it, and handing over another would
+ * throw that popover away. So filling it has to replace what a previous word
+ * left rather than pile on top of it. */
+static void test_filling_the_menu_replaces_what_was_there(void)
+{
+    const char* const first[]  = { "hello", "hallo" };
+    const char* const second[] = { "cat" };
+
+    GMenu* menu = g_menu_new();
+    spell_check_fill_menu(menu, "helo", first, 2);
+    spell_check_fill_menu(menu, "cta", second, 1);
+
+    g_assert_cmpint(g_menu_model_get_n_items(G_MENU_MODEL(menu)), ==, 2);
+
+    char* heading = NULL;
+    g_assert_true(g_menu_model_get_item_attribute(G_MENU_MODEL(menu), 0,
+                                                  G_MENU_ATTRIBUTE_LABEL, "s",
+                                                  &heading));
+    g_assert_cmpstr(heading, ==, "cta");
+    g_free(heading);
+
+    GMenuModel* offered = section_of(G_MENU_MODEL(menu), 0);
+    g_assert_cmpint(g_menu_model_get_n_items(offered), ==, 1);
+
+    g_object_unref(offered);
+    g_object_unref(menu);
+}
+
 /* A held marker follows nothing, and releasing it checks the document once —
  * which is how a load of several hundred insertions costs one pass. */
 static void test_a_hold_defers_the_marking_to_its_release(void)
@@ -282,6 +468,8 @@ int main(int argc, char* argv[])
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/spell-check/cursor-holds-the-word-being-typed",
                     test_the_word_being_typed_is_the_one_at_the_cursor);
+    g_test_add_func("/spell-check/a-cursor-that-typed-nothing-leaves-the-mark",
+                    test_a_cursor_that_typed_nothing_leaves_the_mark);
     g_test_add_func("/spell-check/first-word-is-checked",
                     test_the_first_word_of_a_document_is_checked);
     g_test_add_func("/spell-check/marks-a-misspelling", test_a_misspelling_is_marked);
@@ -296,5 +484,15 @@ int main(int argc, char* argv[])
                     test_text_wearing_a_skipped_tag_is_not_checked);
     g_test_add_func("/spell-check/hold-defers-to-release",
                     test_a_hold_defers_the_marking_to_its_release);
+    g_test_add_func("/spell-check/clicking-a-marked-word-keeps-its-mark",
+                    test_clicking_a_marked_word_keeps_its_mark);
+    g_test_add_func("/spell-check/menu-offers-the-corrections",
+                    test_the_menu_offers_the_corrections);
+    g_test_add_func("/spell-check/menu-says-when-there-is-nothing-to-offer",
+                    test_a_word_with_nothing_to_offer_still_gets_a_menu);
+    g_test_add_func("/spell-check/menu-offers-only-the-first-corrections",
+                    test_only_the_first_corrections_are_offered);
+    g_test_add_func("/spell-check/filling-the-menu-replaces-it",
+                    test_filling_the_menu_replaces_what_was_there);
     return g_test_run();
 }

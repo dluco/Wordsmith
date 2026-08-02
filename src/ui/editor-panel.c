@@ -1134,6 +1134,10 @@ EditorPanel* editor_panel_new(void)
                          editor->inline_tags[inline_tag_index(
                              WORDSMITH_MARKUP_SPAN_CODE)]);
     spell_check_skip_tag(editor->spelling, editor->code_block_tag);
+    /* And the corrections, which are offered over the view rather than the
+     * buffer: a red line is a question, and the answer has to be reachable from
+     * the word it is under. */
+    spell_check_attach_menu(editor->spelling, editor->view);
 
     GtkWidget* scroller = gtk_scrolled_window_new();
     gtk_widget_add_css_class(scroller, "editor-pane");
