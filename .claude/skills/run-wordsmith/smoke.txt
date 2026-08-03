@@ -1,0 +1,72 @@
+# Wordsmith smoke script — feed to driver.py. Every `expect` that fails
+# prints the file it read, and the run exits non-zero.
+#
+# Assumes the fixture project made by `new-project.sh`: chapter-one.md and
+# chapter-two.md, each with frontmatter and one paragraph.
+
+# --- a document opens, and its frontmatter is NOT in the buffer -------------
+pick chapter-one
+text
+
+# --- an inline style follows the text, and survives a save round trip -------
+sel 18 24
+do format-bold
+buttons
+do save
+wait 1
+expect Manuscript/chapter-one.md **stormy**
+expect Manuscript/chapter-one.md title: Chapter One
+
+# --- undo takes the tag back, and the title bar's `*` with it --------------
+do undo
+do save
+wait 1
+expect Manuscript/chapter-one.md and stormy night
+
+# --- a block style is a pick, not a flag ----------------------------------
+# Note the order: the words go in first, then the style. Picking a style on an
+# empty line and typing into it works everywhere EXCEPT the last line of the
+# buffer, which has no newline for the block tag to cover — see Gotchas.
+caret end
+type \nA Later Chapter
+do block-style heading-2
+buttons
+do save
+wait 1
+expect Manuscript/chapter-one.md ## A Later Chapter
+
+# --- typing `- ` makes a list; Enter carries it; an empty item ends it -----
+caret end
+type \n
+do block-style paragraph
+type -\s
+buttons
+type Milk\nEggs\n
+text
+do save
+wait 1
+expect Manuscript/chapter-one.md - Milk
+expect Manuscript/chapter-one.md - Eggs
+
+# --- one Enter is one Ctrl+Z: the marker goes with the newline -------------
+caret end
+type \n
+type -\s
+type Salt\n
+text
+do undo
+text
+
+# --- creating a document lands a file before it is named ------------------
+do new-text
+wait 1
+rows
+sh ls Manuscript
+
+# --- composition mode hides panes underneath the answer, never changing it -
+state show-binder
+do composition-mode
+state composition-mode
+state show-binder
+do composition-mode
+state composition-mode
