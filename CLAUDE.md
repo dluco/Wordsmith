@@ -452,6 +452,17 @@ Only a **lone newline** counts. A paste that happens to contain one is not a
 return being pressed, and turning every line of a dropped page into an item is
 not what it asks for.
 
+**Anything that edits the buffer from inside the `insert-text` handler owes the
+handlers behind it a call to `revalidate()`.** GTK hands every after-handler the
+same `location` iterator and an iterator does not survive a mutation, so the
+marker this inserts leaves whoever is connected later reading a dead one —
+`spell-check.c` is exactly that, created after the panel's handlers on purpose,
+and it reads `location` for the line to recheck and for where the author is
+typing. Without it GTK warns on every Enter inside a list and the marking reads
+a garbage offset. The insert mark is the right answer rather than an arithmetic
+correction, because what the iterator means to anyone behind us is where the
+text that just arrived has left the author.
+
 Ending a list is the answer that has to **refuse the newline**, which is why the
 decision is made before rather than corrected after:
 `g_signal_stop_emission_by_name()` in a handler connected the ordinary way keeps
@@ -514,11 +525,26 @@ draws for itself goes in. It is the gesture every editor with lists has, and the
 one an author reaches for long before they find the button.
 
 What makes it safe to do without being asked is that **saying no is one
-keystroke**. The conversion is its own undo record, pushed after the space's own
-text record rather than folded into it, so Ctrl+Z leaves a paragraph reading
-`- ` and whoever meant a literal hyphen carries on typing. A second press takes
-the characters as ordinary typing. One record for both would leave them nothing
-to do but type the same three characters again.
+keystroke, and either keystroke an author would try**. The conversion is its own
+undo record, pushed after the space's own text record rather than folded into
+it, so Ctrl+Z leaves a paragraph reading `- ` and whoever meant a literal hyphen
+carries on typing. A second press takes the characters as ordinary typing. One
+record for both would leave them nothing to do but type the same three
+characters again.
+
+**Backspace is the other way out, and it has to be caught at the key binding.**
+A list marker is tagged non-editable, so a backspace against one never arrives
+as a deletion at all — before `take_back_autoformat()` it did nothing
+whatsoever, which is a list that made itself and then would not go away for
+anyone who had not thought of Ctrl+Z. `GtkTextView::backspace` is the only place
+the press can still be seen, and stopping that emission is what keeps the view's
+own binding off it. It goes through the same undo record Ctrl+Z does, so the two
+cannot come to mean different things; `autoformat_at` is what says the record on
+top is still the conversion, and **anything at all happening forgets it** — a
+keystroke, a deletion, the caret moving. The one difference is where the caret
+is left: undo lands it on the line it changed, as any block undo does, while a
+backspace leaves it after the `- ` that just came back, or the next press would
+join the line to the one above instead of eating the marker.
 
 `editor_autoformat_style()` is the display-free seam and the whole of the rule,
 the same shape `editor_return_action()` is. It is deliberately narrow, because

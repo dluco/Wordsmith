@@ -266,11 +266,18 @@ EditorReturnAction editor_return_action(const char* text, int length,
  * the one an author reaches for long before they find the button.
  *
  * What makes it safe to do without being asked is that saying no is one
- * keystroke: the conversion is its own undo record, separate from the typing
- * that led to it, so Ctrl+Z leaves a paragraph reading `- ` and an author who
- * meant a literal hyphen carries on. Rolling both into one record would take
- * the marker away with it and leave them nothing to type but the same three
- * characters again. */
+ * keystroke, and **either keystroke an author would try**:
+ *
+ *   - Ctrl+Z, because the conversion is its own undo record, separate from the
+ *     typing that led to it — so it leaves a paragraph reading `- ` and an
+ *     author who meant a literal hyphen carries on. Rolling both into one
+ *     record would take the marker away with it and leave them nothing to type
+ *     but the same three characters again.
+ *   - Backspace, which is what people actually reach for and which has to be
+ *     caught at the key binding: a list marker is tagged non-editable, so a
+ *     backspace against one never reaches the buffer as a deletion, and before
+ *     this it did nothing whatsoever. It goes through the same record Ctrl+Z
+ *     does and differs only in where it leaves the caret. */
 
 /** Whether a typed list marker turns the line into a list.
  *

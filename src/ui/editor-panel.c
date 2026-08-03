@@ -85,6 +85,11 @@ struct EditorPanel {
     UndoRecord* pending_delete;
     gboolean    applying;
 
+    /* Where the cursor was left by the last list a typed marker made, or -1.
+     * Backspace there means "no, I meant a hyphen"; anything else at all
+     * forgets it. See take_back_autoformat(). */
+    int autoformat_at;
+
     EditorHistoryFn history_callback;
     void*           history_user_data;
 
@@ -1362,10 +1367,22 @@ static void record_edit(EditorPanel* editor, UndoRecord* record)
 /* A deletion has to be read before it happens — afterwards the text and the
  * tags over it are both gone — so both ends of "delete-range" are connected,
  * the same shape as the insertion pair below. */
+/* The spot a backspace would undo a conversion at is forgotten by anything else
+ * happening at all — another keystroke, a deletion, the cursor moving. Only the
+ * press *immediately* after the list made itself means "no"; once the author
+ * has carried on, backspace is an ordinary backspace again. */
+static void forget_autoformat(EditorPanel* editor)
+{
+    editor->autoformat_at = -1;
+}
+
 static void on_range_deleting(GtkTextBuffer* buffer, GtkTextIter* start,
                               GtkTextIter* end, gpointer user_data)
 {
     EditorPanel* editor = user_data;
+    if (!editor->applying) {
+        forget_autoformat(editor);
+    }
 
     g_clear_pointer(&editor->pending_delete, undo_record_free);
     if (!recording(editor)) {
@@ -1413,6 +1430,7 @@ static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_dat
      * things done, however close together the offsets happen to fall. */
     if (!editor->applying && editor->undo != NULL && editor->path != NULL) {
         undo_store_break_run(editor->undo, editor->path);
+        forget_autoformat(editor);
     }
 
     forget_asked_styles(editor);
@@ -1477,6 +1495,7 @@ static void on_text_inserting(GtkTextBuffer* buffer, GtkTextIter* location,
     if (editor->loading || editor->applying) {
         return;
     }
+    forget_autoformat(editor);
 
     /* What a return here means, decided while the line it was pressed on is
      * still the line the cursor is in. The after handler acts on a
@@ -1562,6 +1581,96 @@ static void dress_block(EditorPanel* editor, int from, int to)
     }
 }
 
+/* Backspace where a typed marker has just made a list: take the list back and
+ * leave the characters, exactly as one Ctrl+Z there does.
+ *
+ * It has to be caught here rather than left to the buffer, because a marker is
+ * tagged non-editable — a backspace against one does nothing at all, so an
+ * author who typed `- ` and wanted a hyphen found the key they would reach for
+ * first doing nothing, with no hint that Ctrl+Z was the way out. This is the
+ * gesture every editor that formats while you type answers this way.
+ *
+ * The record on top of the history *is* the conversion, because `autoformat_at`
+ * survives nothing else happening, so the edit goes through the same record a
+ * press of Ctrl+Z would rather than being reversed by hand here. One rule, one
+ * path, and the two cannot come to mean different things.
+ *
+ * The **caret** is the one thing the two do differently, and deliberately. Undo
+ * lands it on the line it changed, which is where undoing any block pick lands
+ * it; a backspace was pressed by someone whose caret was after the `- ` they
+ * typed, and leaving it at the head of the line would make the next press join
+ * the line to the one above instead of eating the marker they are in the middle
+ * of removing.
+ *
+ * Returns whether the backspace was spent on this rather than on the text. */
+static gboolean take_back_autoformat(EditorPanel* editor)
+{
+    GtkTextIter at;
+    if (editor->autoformat_at < 0 || editor->undo == NULL || editor->path == NULL) {
+        return FALSE;
+    }
+    gtk_text_buffer_get_iter_at_mark(editor->buffer, &at,
+                                     gtk_text_buffer_get_insert(editor->buffer));
+    if (gtk_text_iter_get_offset(&at) != editor->autoformat_at) {
+        return FALSE;
+    }
+
+    const UndoRecord* record = undo_store_peek_undo(editor->undo, editor->path);
+    if (record == NULL) {
+        return FALSE;
+    }
+
+    /* Read before the record moves anything; the line survives, the offsets do
+     * not. */
+    const int line = gtk_text_iter_get_line(&at);
+
+    editor_panel_apply_record(editor, record, TRUE);
+    undo_store_step_undo(editor->undo, editor->path);
+    notify_history(editor);
+    forget_autoformat(editor);
+
+    /* Back to the end of the characters that have just come back, which is the
+     * far side of the `- ` the author is now holding Backspace down on. */
+    GtkTextIter start;
+    GtkTextIter end;
+    line_text_bounds(editor->buffer, line, &start, &end);
+    gtk_text_buffer_place_cursor(editor->buffer, &end);
+    return TRUE;
+}
+
+static void on_backspace(GtkTextView* view, gpointer user_data)
+{
+    if (take_back_autoformat(user_data)) {
+        /* Connected in the ordinary phase, so stopping the emission is what
+         * keeps GtkTextView's own binding from deleting a character as well. */
+        g_signal_stop_emission_by_name(view, "backspace");
+    }
+}
+
+/* Put `location` back where the author is standing, after this panel has moved
+ * text about inside its own "insert-text" handler.
+ *
+ * **Anything here that edits the buffer from that handler owes the handlers
+ * behind it this call.** GTK hands every after-handler the same iterator, and
+ * an iterator does not survive a mutation — so an insertion or a deletation of
+ * ours leaves whoever is connected after us reading a dead one. spell-check.c
+ * is exactly that: it is created after the panel's handlers on purpose, and it
+ * reads `location` for the line to recheck and for where the author is typing.
+ * Left alone, GTK warns and the marking reads a garbage offset.
+ *
+ * The insert mark is the right answer rather than an arithmetic correction of
+ * the old offset: what the iterator means to anyone behind us is where the text
+ * that just arrived has left the author, and after these edits that is exactly
+ * where the cursor now is. */
+static void revalidate(EditorPanel* editor, GtkTextIter* location)
+{
+    if (location == NULL) {
+        return;
+    }
+    gtk_text_buffer_get_iter_at_mark(editor->buffer, location,
+                                     gtk_text_buffer_get_insert(editor->buffer));
+}
+
 /* Open another item below the one a return was pressed in, the before handler
  * having already decided that is what it meant.
  *
@@ -1577,7 +1686,7 @@ static void dress_block(EditorPanel* editor, int from, int to)
  * which is exactly the state this is here to fix.
  *
  * Returns the record for the item, or NULL when there was no item to open. */
-static UndoRecord* continue_list(EditorPanel* editor, int to)
+static UndoRecord* continue_list(EditorPanel* editor, GtkTextIter* location, int to)
 {
     if (editor->return_action != EDITOR_RETURN_CONTINUE_LIST
         || !block_style_is_list(editor->insert_block)) {
@@ -1596,6 +1705,7 @@ static UndoRecord* continue_list(EditorPanel* editor, int to)
             : NULL;
 
     apply_block_lines(editor, &entry, 1, FALSE);
+    revalidate(editor, location);
     return record;
 }
 
@@ -1623,7 +1733,8 @@ static UndoRecord* continue_list(EditorPanel* editor, int to)
  *
  * Both buffer edits are made under `applying`, the way a pick's markers are, so
  * neither arrives in the history as an edit of its own. */
-static void autoformat_list(EditorPanel* editor, const char* text, int length)
+static void autoformat_list(EditorPanel* editor, GtkTextIter* location,
+                            const char* text, int length)
 {
     if (!editor_autoformat_lists()) {
         return;
@@ -1681,7 +1792,12 @@ static void autoformat_list(EditorPanel* editor, const char* text, int length)
     gtk_text_buffer_delete(editor->buffer, &start, &end);
     editor->applying = was_applying;
 
+    revalidate(editor, location);
     record_edit(editor, undo_record_new_compound(parts, G_N_ELEMENTS(parts)));
+
+    /* Where a backspace would mean "no, I meant a hyphen". Set last, so the
+     * cursor moves this function has just made do not clear it again. */
+    editor->autoformat_at = gtk_text_iter_get_offset(location);
 }
 
 /* After it lands: dress it. The answer is applied and its opposite removed, so
@@ -1735,14 +1851,14 @@ static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
     /* And the item a return opens inside a list, which is part of the same
      * keystroke: one press in, one press to take it back. The text record is
      * captured first because that is the order the two have to be applied in. */
-    parts[1] = continue_list(editor, to);
+    parts[1] = continue_list(editor, location, to);
 
     record_edit(editor, undo_record_new_compound(parts, G_N_ELEMENTS(parts)));
 
     /* And after that record rather than inside it: a marker typed into a list is
      * a second thing done, and the press that takes it back has to leave the
      * characters that asked for it. */
-    autoformat_list(editor, text, length);
+    autoformat_list(editor, location, text, length);
 
     notify_format(editor);
 }
@@ -1949,6 +2065,7 @@ static void on_buffer_modified(GtkTextBuffer* buffer, gpointer user_data)
 EditorPanel* editor_panel_new(void)
 {
     EditorPanel* editor = g_new0(EditorPanel, 1);
+    forget_autoformat(editor);   /* -1, which g_new0 does not give */
 
     GtkWidget* view = gtk_text_view_new();
     editor->view   = GTK_TEXT_VIEW(view);
@@ -1985,6 +2102,12 @@ EditorPanel* editor_panel_new(void)
                      G_CALLBACK(on_range_deleting), editor);
     g_signal_connect_after(editor->buffer, "delete-range",
                            G_CALLBACK(on_range_deleted), editor);
+
+    /* On the view rather than the buffer: a marker is tagged non-editable, so a
+     * backspace against one never reaches the buffer as a deletion at all.
+     * "backspace" is the key binding itself, which is the only place the press
+     * can still be seen. */
+    g_signal_connect(editor->view, "backspace", G_CALLBACK(on_backspace), editor);
 
     /* After the panel's own handlers, deliberately: a decoration should read
      * the text as the panel has finished leaving it. Text typed into a code
@@ -2077,6 +2200,7 @@ void editor_panel_set_history_callback(EditorPanel* editor,
 void editor_panel_close(EditorPanel* editor)
 {
     note_leaving(editor);
+    forget_autoformat(editor);
 
     editor->loading = TRUE;
     gtk_text_buffer_set_text(editor->buffer, "", 0);
