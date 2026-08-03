@@ -310,8 +310,9 @@ static void test_the_menu_offers_the_corrections(void)
     GMenuModel* menu   = G_MENU_MODEL(filled);
     spell_check_fill_menu(filled, "helo", corrections, 3);
 
-    /* The word it is about, then the corrections, then the dictionary. */
-    g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 2);
+    /* The corrections, the dictionary, and then the view's own editing verbs in
+     * three sections of their own. */
+    g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 5);
 
     char* heading = NULL;
     g_assert_true(g_menu_model_get_item_attribute(menu, 0, G_MENU_ATTRIBUTE_LABEL,
@@ -353,6 +354,49 @@ static void test_the_menu_offers_the_corrections(void)
 
     g_object_unref(offered);
     g_object_unref(dictionary);
+    g_object_unref(menu);
+}
+
+/* The whole reason the menu is ours rather than an addition to GtkTextView's:
+ * that one joins onto the end, and the answer to what the author clicked has to
+ * be the first thing they see. */
+static void test_the_corrections_come_first(void)
+{
+    const char* const corrections[] = { "hello" };
+    GMenu*            menu          = g_menu_new();
+    spell_check_fill_menu(menu, "helo", corrections, 1);
+
+    GMenuModel* first = section_of(G_MENU_MODEL(menu), 0);
+
+    char* action = NULL;
+    g_assert_true(g_menu_model_get_item_attribute(first, 0, G_MENU_ATTRIBUTE_ACTION,
+                                                  "s", &action));
+    g_assert_cmpstr(action, ==, "spelling.correct");
+    g_free(action);
+
+    /* And the editing verbs are still there, under them. Cut is the view's own
+     * action, and Undo is Wordsmith's rather than the view's dead one. */
+    gboolean has_cut  = FALSE;
+    gboolean has_undo = FALSE;
+    for (int section = 1; section < g_menu_model_get_n_items(G_MENU_MODEL(menu));
+         section++) {
+        GMenuModel* items = section_of(G_MENU_MODEL(menu), section);
+        for (int index = 0; index < g_menu_model_get_n_items(items); index++) {
+            char* named = NULL;
+            if (g_menu_model_get_item_attribute(items, index,
+                                                G_MENU_ATTRIBUTE_ACTION, "s",
+                                                &named)) {
+                has_cut  |= g_strcmp0(named, "clipboard.cut") == 0;
+                has_undo |= g_strcmp0(named, "win.undo") == 0;
+                g_free(named);
+            }
+        }
+        g_object_unref(items);
+    }
+    g_assert_true(has_cut);
+    g_assert_true(has_undo);
+
+    g_object_unref(first);
     g_object_unref(menu);
 }
 
@@ -405,9 +449,8 @@ static void test_only_the_first_corrections_are_offered(void)
 }
 
 /* The same menu is handed to the view once and filled from then on — GTK builds
- * its popover from the model and follows it, and handing over another would
- * throw that popover away. So filling it has to replace what a previous word
- * left rather than pile on top of it. */
+ * its popover from the model once and follows it from then on. So filling it
+ * has to replace what a previous word left rather than pile on top of it. */
 static void test_filling_the_menu_replaces_what_was_there(void)
 {
     const char* const first[]  = { "hello", "hallo" };
@@ -417,7 +460,7 @@ static void test_filling_the_menu_replaces_what_was_there(void)
     spell_check_fill_menu(menu, "helo", first, 2);
     spell_check_fill_menu(menu, "cta", second, 1);
 
-    g_assert_cmpint(g_menu_model_get_n_items(G_MENU_MODEL(menu)), ==, 2);
+    g_assert_cmpint(g_menu_model_get_n_items(G_MENU_MODEL(menu)), ==, 5);
 
     char* heading = NULL;
     g_assert_true(g_menu_model_get_item_attribute(G_MENU_MODEL(menu), 0,
@@ -488,6 +531,8 @@ int main(int argc, char* argv[])
                     test_clicking_a_marked_word_keeps_its_mark);
     g_test_add_func("/spell-check/menu-offers-the-corrections",
                     test_the_menu_offers_the_corrections);
+    g_test_add_func("/spell-check/menu-puts-the-corrections-first",
+                    test_the_corrections_come_first);
     g_test_add_func("/spell-check/menu-says-when-there-is-nothing-to-offer",
                     test_a_word_with_nothing_to_offer_still_gets_a_menu);
     g_test_add_func("/spell-check/menu-offers-only-the-first-corrections",

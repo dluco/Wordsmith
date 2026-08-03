@@ -42,13 +42,13 @@ struct SpellCheck {
      * rather than two offsets, so an edit between the menu being filled and an
      * item being chosen cannot put the correction somewhere else. */
     GtkTextView*        view;
-    GMenu*              menu;      /* owned */
+    GMenu*              menu;       /* owned */
+    GtkWidget*          popover;    /* owned; parented into the view */
     GSimpleActionGroup* actions;
     GtkTextMark*        word_start;
     GtkTextMark*        word_end;
     char*               word;
     GtkEventController* secondary_click;   /* borrowed; owned by the view */
-    gboolean            choosing;   /* an item of the menu is being acted on */
 };
 
 /* ── the answer ──────────────────────────────────────────────────────────── */
@@ -204,10 +204,6 @@ void spell_check_refresh(SpellCheck* spelling)
 
 /* ── following the buffer ────────────────────────────────────────────────── */
 
-/* Defined with the menu, and needed here: the cursor moving is one of the ways
- * the offer over a word stops being about anything. */
-static void withdraw_offer(SpellCheck* spelling);
-
 /* After the text has landed, so the line it landed on can be read. The
  * insertion may have carried newlines — a paste of three paragraphs — so the
  * span is worked out from the text's own length rather than assumed to be one
@@ -272,14 +268,6 @@ static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_dat
     const int left = spelling->cursor_line;
     spelling->cursor_line = line;
 
-    /* The offer belongs to the word the last click was on. The cursor going
-     * anywhere is the author's attention going with it, and GtkTextView opens
-     * this menu from the keyboard as well — where nothing gets the chance to
-     * prepare it, so what is left over is all it would show. */
-    if (!spelling->choosing) {
-        withdraw_offer(spelling);
-    }
-
     if (left != line) {
         recheck_lines(spelling, left, left);
     }
@@ -287,6 +275,42 @@ static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_dat
 }
 
 /* ── the menu over a misspelling ─────────────────────────────────────────── */
+
+/* The view's own editing verbs, in GTK's order and under GTK's labels, so the
+ * menu a misspelling opens is the ordinary menu with the spelling above it
+ * rather than a different menu. Undo and Redo are the exception and name
+ * Wordsmith's actions: GtkTextView's `text.undo` drives the buffer's own
+ * history, which is switched off at construction, so naming it would put two
+ * dead items in a menu we are building from scratch anyway. */
+static void append_editing_items(GMenu* menu)
+{
+    GMenu* clipboard = g_menu_new();
+    g_menu_append(clipboard, "Cu_t", "clipboard.cut");
+    g_menu_append(clipboard, "_Copy", "clipboard.copy");
+    g_menu_append(clipboard, "_Paste", "clipboard.paste");
+    g_menu_append(clipboard, "_Delete", "selection.delete");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(clipboard));
+    g_object_unref(clipboard);
+
+    GMenu* history = g_menu_new();
+    g_menu_append(history, "_Undo", "win.undo");
+    g_menu_append(history, "_Redo", "win.redo");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(history));
+    g_object_unref(history);
+
+    GMenu* rest = g_menu_new();
+    g_menu_append(rest, "Select _All", "selection.select-all");
+
+    GMenuItem* emoji = g_menu_item_new("Insert _Emoji", "misc.insert-emoji");
+    /* GTK hides this one rather than greying it when the view will not take an
+     * emoji, and so do we. */
+    g_menu_item_set_attribute(emoji, "hidden-when", "s", "action-disabled");
+    g_menu_append_item(rest, emoji);
+    g_object_unref(emoji);
+
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(rest));
+    g_object_unref(rest);
+}
 
 void spell_check_fill_menu(GMenu* menu, const char* word,
                            const char* const* corrections, size_t count)
@@ -315,8 +339,9 @@ void spell_check_fill_menu(GMenu* menu, const char* word,
         g_menu_append(offered, "No Suggestions", "spelling.no-suggestions");
     }
 
-    /* The word as the section's heading: the items land under the view's own
-     * cut and paste, where a bare list of near-words would be a puzzle. */
+    /* First, and the word is the section's heading. What the author right
+     * clicked a red line to ask is what the menu answers before anything
+     * else; the editing verbs are underneath, where they always are. */
     g_menu_append_section(menu, word, G_MENU_MODEL(offered));
     g_object_unref(offered);
 
@@ -327,18 +352,15 @@ void spell_check_fill_menu(GMenu* menu, const char* word,
     g_menu_append(dictionary, "Add to Dictionary", "spelling.add");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(dictionary));
     g_object_unref(dictionary);
+
+    append_editing_items(menu);
 }
 
-/* Take the offer back: the menu empties and the word it was about is forgotten.
- * The model itself stays where it is — the view keeps the popover it built from
- * it and follows the change — because handing over another would throw that
- * popover away, and from an item's own handler that means pulling the menu out
- * from under the click that chose it. */
+/* Forget the word the menu was about. Nothing shows the menu but the press that
+ * fills it, so there is no stale offer to guard against — only the marks and
+ * the text to let go of. */
 static void withdraw_offer(SpellCheck* spelling)
 {
-    if (spelling->menu != NULL) {
-        g_menu_remove_all(spelling->menu);
-    }
     if (spelling->word_start != NULL) {
         gtk_text_buffer_delete_mark(spelling->buffer, spelling->word_start);
         spelling->word_start = NULL;
@@ -377,15 +399,10 @@ static void on_correct(GSimpleAction* action, GVariant* value, gpointer user_dat
 
     const char* correction = g_variant_get_string(value, NULL);
 
-    /* The edit below moves the cursor, and a cursor that moves takes the offer
-     * back — which would empty this menu while the click that chose an item of
-     * it is still being handled. */
-    spelling->choosing = TRUE;
     gtk_text_buffer_begin_user_action(spelling->buffer);
     gtk_text_buffer_delete(spelling->buffer, &start, &end);
     gtk_text_buffer_insert(spelling->buffer, &start, correction, -1);
     gtk_text_buffer_end_user_action(spelling->buffer);
-    spelling->choosing = FALSE;
 }
 
 static void on_ignore(GSimpleAction* action, GVariant* value, gpointer user_data)
@@ -435,14 +452,47 @@ static gboolean misspelling_at(SpellCheck* spelling, const GtkTextIter* at,
     return gtk_text_iter_compare(start, end) < 0;
 }
 
-/* Ahead of GtkTextView's own gesture, which is what makes this the last chance
- * to say what the menu holds. The press is deliberately not claimed: the view
- * still opens its context menu, and this has only filled in the part of it that
- * is about the word underneath. */
+/* What the view's own popup would have set on its way up. GTK does this in a
+ * static function of its own, so a menu that names those verbs has to answer
+ * the same questions itself or offer a Paste that does nothing.
+ *
+ * `range_contains_editable_text()` is GTK's own test and is private; whether
+ * the view is editable is the same answer here, because nothing in this editor
+ * makes one stretch of a document editable and another not. */
+static void update_editing_items(SpellCheck* spelling)
+{
+    GtkWidget* view = GTK_WIDGET(spelling->view);
+
+    GtkTextIter    selection_start;
+    GtkTextIter    selection_end;
+    const gboolean selected = gtk_text_buffer_get_selection_bounds(
+        spelling->buffer, &selection_start, &selection_end);
+    const gboolean editable = gtk_text_view_get_editable(spelling->view);
+
+    GdkClipboard*  clipboard = gtk_widget_get_clipboard(view);
+    const gboolean pasteable = gdk_content_formats_contain_gtype(
+        gdk_clipboard_get_formats(clipboard), G_TYPE_STRING);
+
+    gtk_widget_action_set_enabled(view, "clipboard.cut", selected && editable);
+    gtk_widget_action_set_enabled(view, "clipboard.copy", selected);
+    gtk_widget_action_set_enabled(view, "clipboard.paste", editable && pasteable);
+    gtk_widget_action_set_enabled(view, "selection.delete", selected && editable);
+    gtk_widget_action_set_enabled(
+        view, "selection.select-all",
+        gtk_text_buffer_get_char_count(spelling->buffer) > 0);
+}
+
+/* Ahead of GtkTextView's own gesture, and on a misspelling it takes the press
+ * away from it: the corrections have to come *first* in the menu, and the extra
+ * menu GTK offers can only join onto the end. So the menu over a red line is
+ * ours, editing verbs and all, and every other press is left alone to open the
+ * view's own.
+ *
+ * The focus grab is what the claimed press would have done: a click in the
+ * manuscript puts the caret's home there, whatever else it opens. */
 static void on_secondary_press(GtkGestureClick* gesture, int n_press, double x,
                                double y, gpointer user_data)
 {
-    (void) gesture;
     (void) n_press;
 
     SpellCheck* spelling = user_data;
@@ -483,6 +533,16 @@ static void on_secondary_press(GtkGestureClick* gesture, int n_press, double x,
     spell_check_fill_menu(spelling->menu, spelling->word,
                           (const char* const*) corrections, count);
     wordsmith_spell_corrections_free(corrections, count);
+
+    update_editing_items(spelling);
+    gtk_widget_grab_focus(GTK_WIDGET(spelling->view));
+
+    /* Taken from the view, so it does not open its own on top of this one. */
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+
+    const GdkRectangle at_pointer = { (int) x, (int) y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(spelling->popover), &at_pointer);
+    gtk_popover_popup(GTK_POPOVER(spelling->popover));
 }
 
 void spell_check_attach_menu(SpellCheck* spelling, GtkTextView* view)
@@ -513,10 +573,16 @@ void spell_check_attach_menu(SpellCheck* spelling, GtkTextView* view)
     gtk_widget_insert_action_group(GTK_WIDGET(view), "spelling",
                                    G_ACTION_GROUP(spelling->actions));
 
-    /* Handed over empty and once. From here on the offer is made and taken back
-     * by filling and emptying it, which the view follows. */
-    spelling->menu = g_menu_new();
-    gtk_text_view_set_extra_menu(view, G_MENU_MODEL(spelling->menu));
+    /* Ours rather than the view's, since the view's can only be added to at the
+     * bottom. Built once and refilled on every press: GTK follows the model's
+     * items-changed, so the popover is right without being rebuilt. The look is
+     * GtkTextView's own, so the two menus are not obviously two.  */
+    spelling->menu    = g_menu_new();
+    spelling->popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(spelling->menu));
+    gtk_popover_set_has_arrow(GTK_POPOVER(spelling->popover), FALSE);
+    gtk_popover_set_position(GTK_POPOVER(spelling->popover), GTK_POS_BOTTOM);
+    gtk_widget_set_halign(spelling->popover, GTK_ALIGN_START);
+    gtk_widget_set_parent(spelling->popover, GTK_WIDGET(view));
 
     GtkGesture* click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
@@ -577,7 +643,7 @@ void spell_check_free(SpellCheck* spelling)
     g_signal_handlers_disconnect_by_data(spelling->buffer, spelling);
     withdraw_offer(spelling);
 
-    /* And the same for the view: the gesture, the actions and the menu all
+    /* And the same for the view: the gesture, the actions and the popover all
      * point back here. The reference taken in spell_check_attach_menu() is what
      * makes the widget still be there to take them off. */
     if (spelling->view != NULL) {
@@ -586,7 +652,7 @@ void spell_check_free(SpellCheck* spelling)
                                          spelling->secondary_click);
         }
         gtk_widget_insert_action_group(GTK_WIDGET(spelling->view), "spelling", NULL);
-        gtk_text_view_set_extra_menu(spelling->view, NULL);
+        g_clear_pointer(&spelling->popover, gtk_widget_unparent);
         g_clear_object(&spelling->view);
     }
     g_clear_object(&spelling->menu);

@@ -56,34 +56,46 @@
  * reachable from the word itself: right-clicking one offers what it might have
  * been, and the two ways of saying it is a word already.
  *
- * GTK4 gives no way to build the text view's context menu as it opens — GTK3's
- * `populate-popup` is gone and there is no signal in its place. What it gives
- * instead is gtk_text_view_set_extra_menu(), a model joined onto the end of the
- * view's own, so the menu has to be *ready before* the popup rather than made
- * during it. A secondary-click gesture in the **capture** phase is what makes
- * that possible: GtkTextView adds its own click gesture in the bubble phase, so
- * ours runs first, fills the offer in, and deliberately does not claim the
- * press — the view still opens the menu, with the part about the word under the
- * pointer already in it.
+ * **The corrections come first, so the menu is ours.** That one requirement is
+ * what decides the whole shape of this. GTK4 gives no way to build the text
+ * view's context menu as it opens — GTK3's `populate-popup` is gone and there
+ * is no signal in its place — and the one hook it does give,
+ * gtk_text_view_set_extra_menu(), joins a model onto the **end** of the view's
+ * own (`gtk_joined_menu_append_menu`, and nothing chooses where). A menu whose
+ * first item answers the question the author clicked to ask cannot be built
+ * that way at all.
  *
- * The model is handed over **once** and mutated from then on. GTK builds the
- * popover the first time it is needed and keeps it, and it tracks the model's
- * `items-changed`, so filling and emptying one GMenu updates a menu that is not
- * showing and costs nothing. Handing over a fresh model each time would work
- * too, and is worse: set_extra_menu() throws the built popover away, so calling
- * it from anywhere but a press could pull the menu out from under the click
- * that chose an item.
+ * So the press is **taken** rather than decorated. A secondary-click gesture in
+ * the capture phase runs ahead of GtkTextView's own — GTK adds that one in the
+ * bubble phase — and when the click lands on a marked word it claims the
+ * sequence, so the view never opens its menu, and puts up a popover of ours in
+ * its place. Every other press is left alone, so the ordinary context menu is
+ * still the ordinary context menu.
  *
- * Two consequences of joining onto the end. The items sit below the view's cut
- * and paste rather than above them, which is the whole of what the mechanism
- * allows; and the section carries the word as its heading, because a bare list
- * of near-words that far down the menu is a puzzle.
+ * The price is that a menu of ours has to carry the editing verbs itself, and
+ * this file now names Cut, Copy, Paste, Delete, Select All and Insert Emoji.
+ * They are GtkTextView's own actions under GtkTextView's own labels, in its
+ * order, so the two menus are one menu with a spelling section on top. Two
+ * things do not come for free with them:
  *
- * The offer is withdrawn as soon as the cursor goes anywhere the click did not
- * put it. GtkTextView also opens this menu from the keyboard — Menu and
- * Shift+F10 — with nothing to prepare it, and a menu offering to correct or
- * remember a word somewhere else on the page is worse than one offering
- * nothing.
+ *   - **Undo and Redo name `win.undo` and `win.redo`**, not GtkTextView's
+ *     `text.undo`. The view's pair drives the buffer's own history, which is
+ *     switched off at construction (see undo-stack.h), so naming it would put
+ *     two permanently dead items in a menu we are building by hand anyway.
+ *   - **Cut, Copy and Paste have to be enabled by hand.** GTK does that in a
+ *     static function on its way up, so a menu that names those verbs and does
+ *     not answer the same questions offers a Paste that does nothing. That is
+ *     update_editing_items(), and it is the part most likely to drift as GTK
+ *     changes.
+ *
+ * The model is filled fresh on every press and the popover is built once from
+ * it: GTK tracks a GMenu's `items-changed`, so the menu follows without being
+ * rebuilt.
+ *
+ * A context menu raised from the keyboard — Menu, Shift+F10 — is GtkTextView's
+ * own and holds no spelling. Nothing can prepare that one, and the word under
+ * the cursor is by then the word being typed, which is the one word that is
+ * never marked.
  *
  * The menu names actions in a "spelling" group the marker installs on the view,
  * not window actions. The binder's context menu names window actions because
@@ -177,16 +189,20 @@ gboolean spell_check_word_being_typed(int cursor, int typed_at, int from, int to
 
 /* ── the menu over a misspelling ─────────────────────────────────────────── */
 
-/** Offer the corrections for a misspelled word on a secondary click in `view`,
+/** Open the corrections for a misspelled word on a secondary click in `view`,
  *  which is expected to be showing this marker's buffer. A reference is held
- *  until spell_check_free(), which takes the gesture and the actions back off
- *  it — the widget may be gone by then, and a gesture pointing at freed memory
- *  is not. */
+ *  until spell_check_free(), which takes the gesture, the actions and the
+ *  popover back off it — the widget may be gone by then, and a gesture pointing
+ *  at freed memory is not. */
 void spell_check_attach_menu(SpellCheck* spelling, GtkTextView* view);
 
-/** Fill `menu` with what is offered over `word`: what it might have been, then
- *  the two ways of saying it is a word — for this sitting, or for good.
- *  Whatever was in it goes, since the menu outlives the word it was last about.
+/** Fill `menu` with the whole of what a click on `word` opens: what it might
+ *  have been, then the two ways of saying it is a word — for this sitting or
+ *  for good — and then the view's ordinary editing verbs. Whatever was in it
+ *  goes, since the menu outlives the word it was last about.
+ *
+ *  **The corrections are first.** That is the reason this menu exists rather
+ *  than an addition to GtkTextView's, which can only be joined onto at the end.
  *
  *  Long lists of near-identical suggestions are what a dictionary is happy to
  *  produce and no author reads, so only the first few are offered. An empty

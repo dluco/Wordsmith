@@ -434,29 +434,39 @@ walk coalesces, not because the tag was careful.
 
 A right click on a marked word offers what it might have been, and the two ways
 of saying it is a word: **Ignore All** for this sitting (`accept()`) and **Add
-to Dictionary** for good (`remember()`). GTK4 has nothing like GTK3's
-`populate-popup`, so the menu cannot be built as it opens — it has to be *ready
-before* the press reaches `GtkTextView`. A secondary-click gesture in the
-**capture** phase is what allows that: the view adds its own click gesture in
-the bubble phase, so ours runs first, fills the offer in, and does not claim the
-press. `gtk_text_view_set_extra_menu()` joins the model onto the **end** of the
-view's own menu, so the items land under its cut and paste, and the section
-carries the word as its heading.
+to Dictionary** for good (`remember()`). **They come first in the menu**, and
+that requirement is what decides the design. GTK4 has nothing like GTK3's
+`populate-popup`, and its one hook — `gtk_text_view_set_extra_menu()` — joins a
+model onto the **end** of the view's own, with nothing to choose where. A menu
+whose first item answers what the author clicked cannot be built that way.
 
-The model is handed over **once and mutated from then on**. GTK builds the
-popover the first time it is needed, keeps it, and tracks the model's
-`items-changed`; handing over a fresh model instead throws that popover away,
-which from an item's own handler would pull the menu out from under the click
-that chose it. Because filling and emptying one `GMenu` is free of that hazard,
-the offer is **withdrawn whenever the cursor leaves** — the same menu opens from
-the keyboard (Menu, Shift+F10) with nothing able to prepare it, and one offering
-to correct a word elsewhere on the page is worse than one offering nothing.
-`choosing` is the guard that stops a correction's own edit from withdrawing the
-menu mid-click. `spell_check_fill_menu()` is the display-free seam; the gesture
-that shows it is not testable headless.
+So the press is **taken, not decorated**. A secondary-click gesture in the
+**capture** phase runs ahead of `GtkTextView`'s own (GTK adds that one in the
+bubble phase); on a marked word it claims the sequence, so the view never opens
+its menu, and puts up a popover of ours instead. Every other press is left
+alone, so the ordinary context menu is untouched. The model is refilled per
+press and the popover built once from it, since GTK follows a `GMenu`'s
+`items-changed`.
 
-The menu names actions in a `spelling` group the marker installs **on the
-view**, not window actions like the binder's context menu — those verbs move
+The price is that this file now carries the editing verbs too — Cut, Copy,
+Paste, Delete, Select All, Insert Emoji — as `GtkTextView`'s own actions under
+its labels and in its order, so the two menus are one menu with a spelling
+section on top. Two exceptions:
+
+- **Undo and Redo name `win.undo`/`win.redo`**, not the view's `text.undo`,
+  which drives the buffer history that is switched off at construction.
+- **Cut, Copy and Paste are enabled by hand** in `update_editing_items()`. GTK
+  does that in a static function on its way up, so a menu naming those verbs
+  must answer the same questions or offer a Paste that does nothing. This is the
+  part most likely to drift as GTK changes.
+
+A menu raised from the keyboard (Menu, Shift+F10) is the view's own and holds no
+spelling: nothing can prepare it, and the word at the cursor is the word being
+typed, which is never marked. `spell_check_fill_menu()` is the display-free
+seam; the gesture that shows it is not testable headless.
+
+The spelling items name actions in a `spelling` group the marker installs **on
+the view**, not window actions like the binder's context menu — those verbs move
 files and open dialogs, these three change one word in one buffer. A correction
 reaches the buffer as a plain delete and insert, so the editor's own handlers
 record it, mark the document modified and recheck the line — two undo records
