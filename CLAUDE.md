@@ -529,6 +529,38 @@ Google Docs' assignment. Each carries the shifted symbol as an alternate for the
 reason the text size does: on a US or UK layout Ctrl+Shift+7 reaches the keymap
 as `ampersand`.
 
+### Backspace at a marker
+
+The other way out of a list, and the one an author reaches for first: a
+backspace with the caret **within the marker's reach** — anywhere from the head
+of the line to the far side of the `- ` — turns that item back into a paragraph
+rather than deleting anything. Joining an item to the line above is then two
+presses, one to stop being an item and one to merge, which is what Word and
+Google Docs do.
+
+It is a rule rather than something left to the buffer because a marker is
+**tagged non-editable**, and that made both halves of the line's head wrong:
+
+- Just past the marker, `gtk_text_buffer_backspace()` refuses the deletion
+  outright and *nothing happens*. Deleting the last word of an item left the
+  caret behind a `- ` that no key would remove — the bug this fixes.
+- At column 0 the press is not refused but is worse: it joins the line to the
+  one above and carries the marker into the middle of it, where nothing draws it
+  as a marker and save drops it. The characters on screen and the characters in
+  the manuscript come apart.
+
+`editor_backspace_leaves_list()` is the display-free seam and the whole of the
+rule, the shape `editor_return_action()` is. The line then goes through
+`editor_panel_set_block_style()` like any other pick, so leaving a list this way,
+picking Paragraph from the dropdown and pressing a lit list button are one path
+and one record — it reads "Undo Paragraph" and costs one press to take back.
+
+`take_back_autoformat()` is asked **first**, because where a marker has just been
+made out of typed characters those characters are what the press asks to have
+back; taking the list off instead would take them with it. Both live on
+`GtkTextView::backspace`, that being the only place a press against
+non-editable text can still be seen, and both stop the emission.
+
 ### Typing a list into being
 
 `- ` at the head of a paragraph makes it a bulleted item and `1. ` a numbered
@@ -556,7 +588,9 @@ top is still the conversion, and **anything at all happening forgets it** — a
 keystroke, a deletion, the caret moving. The one difference is where the caret
 is left: undo lands it on the line it changed, as any block undo does, while a
 backspace leaves it after the `- ` that just came back, or the next press would
-join the line to the one above instead of eating the marker.
+join the line to the one above instead of eating the marker. Which is also why
+this is the question `on_backspace` asks first — see Backspace at a marker
+above, whose answer would take those characters away with the list.
 
 `editor_autoformat_style()` is the display-free seam and the whole of the rule,
 the same shape `editor_return_action()` is. It is deliberately narrow, because

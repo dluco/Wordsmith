@@ -1182,6 +1182,16 @@ EditorReturnAction editor_return_action(const char* text, int length,
     return line_is_bare ? EDITOR_RETURN_END_LIST : EDITOR_RETURN_CONTINUE_LIST;
 }
 
+gboolean editor_backspace_leaves_list(gboolean has_selection,
+                                      EditorBlockStyle line_style,
+                                      int marker_chars, int cursor_column)
+{
+    if (has_selection || !block_style_is_list(line_style) || marker_chars <= 0) {
+        return FALSE;
+    }
+    return cursor_column >= 0 && cursor_column <= marker_chars;
+}
+
 /* Whether a typed marker makes a list, read from the config file the first time
  * anything asks. Lazily rather than through an init call beside
  * spell_check_init(): there is nothing to build, one boolean with one reader,
@@ -1637,9 +1647,55 @@ static gboolean take_back_autoformat(EditorPanel* editor)
     return TRUE;
 }
 
+/* Backspace within the reach of a list item's marker: the item becomes a
+ * paragraph, and the press is spent on that rather than on the text.
+ *
+ * `editor_backspace_leaves_list()` is the rule and why. This half only reads the
+ * three things it asks about, and hands the line to the ordinary verb — so
+ * leaving a list this way and picking Paragraph from the dropdown are one path,
+ * one record and one press to take back.
+ *
+ * Returns whether the backspace was spent here. */
+static gboolean leave_list(EditorPanel* editor)
+{
+    if (editor->path == NULL) {
+        return FALSE;
+    }
+
+    GtkTextIter cursor;
+    GtkTextIter bound;
+    gtk_text_buffer_get_iter_at_mark(editor->buffer, &cursor,
+                                     gtk_text_buffer_get_insert(editor->buffer));
+    gtk_text_buffer_get_iter_at_mark(
+        editor->buffer, &bound, gtk_text_buffer_get_selection_bound(editor->buffer));
+
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+    const int line = gtk_text_iter_get_line(&cursor);
+
+    GtkTextIter marker_start;
+    GtkTextIter marker_end;
+    marker_bounds(editor->buffer, &tags, line, &marker_start, &marker_end);
+
+    if (!editor_backspace_leaves_list(
+            !gtk_text_iter_equal(&cursor, &bound),
+            editor_block_style_at(editor->buffer, &tags, line),
+            gtk_text_iter_get_offset(&marker_end)
+                - gtk_text_iter_get_offset(&marker_start),
+            gtk_text_iter_get_line_offset(&cursor))) {
+        return FALSE;
+    }
+
+    editor_panel_set_block_style(editor, EDITOR_BLOCK_PARAGRAPH);
+    return TRUE;
+}
+
 static void on_backspace(GtkTextView* view, gpointer user_data)
 {
-    if (take_back_autoformat(user_data)) {
+    /* The conversion first: where a marker was just made out of typed
+     * characters, they are what the press asks to have back, and taking the
+     * list off instead would take them with it. */
+    if (take_back_autoformat(user_data) || leave_list(user_data)) {
         /* Connected in the ordinary phase, so stopping the emission is what
          * keeps GtkTextView's own binding from deleting a character as well. */
         g_signal_stop_emission_by_name(view, "backspace");

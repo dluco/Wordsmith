@@ -258,6 +258,47 @@ EditorReturnAction editor_return_action(const char* text, int length,
                                         EditorBlockStyle line_style,
                                         gboolean line_is_bare);
 
+/** Whether a backspace pressed at `cursor_column` characters into a line that is
+ *  `line_style` and draws a marker `marker_chars` wide means "this line is not
+ *  an item" rather than a deletion. `has_selection` is whether there is one, a
+ *  backspace over a selection being a deletion of it and nothing else.
+ *
+ *  Backspace is how an author leaves a list, and until this it was how they
+ *  found they could not: **a marker is tagged non-editable**, so a press against
+ *  one is refused by `gtk_text_buffer_backspace()` and does nothing whatsoever.
+ *  Deleting the last word of an item left the caret sitting behind a `- ` that
+ *  no key would remove and no menu obviously governed.
+ *
+ *  The rule is the caret being **within the marker's reach** — anywhere from the
+ *  head of the line to the far side of the marker — because that is the whole of
+ *  where the marker is what a backspace runs into:
+ *
+ *    - inside it or just past it, the press is refused outright, which is the
+ *      bug as reported;
+ *    - at column 0 it is not refused but is worse, joining the line to the one
+ *      above and carrying the marker into the middle of it, where nothing draws
+ *      it as a marker and save drops it — the characters on screen and the
+ *      characters in the manuscript come apart.
+ *
+ *  Either way the press is spent on leaving the list rather than on text, which
+ *  is what Word and Google Docs do and what makes the way out of a list the key
+ *  an author reaches for first. Joining an item to the line above is then two
+ *  presses: one to stop being an item, one to merge. The line goes through
+ *  `editor_panel_set_block_style()` like any other pick, so it is one press to
+ *  take back and reads "Undo Paragraph" in the Edit menu.
+ *
+ *  Where a marker has *just* been made out of typed characters, taking back that
+ *  conversion is what a backspace means instead — it is checked first, or the
+ *  `- ` the author typed would go with the list rather than coming back as the
+ *  hyphen they meant. See "typing a list into being" below.
+ *
+ *  Columns are **character** offsets, the unit `GtkTextIter` counts in. The
+ *  display-free seam for the whole rule, the shape `editor_return_action()`
+ *  is. */
+gboolean editor_backspace_leaves_list(gboolean has_selection,
+                                      EditorBlockStyle line_style,
+                                      int marker_chars, int cursor_column);
+
 /* ── typing a list into being ────────────────────────────────────────────── */
 
 /* `- ` at the head of a paragraph makes it a bulleted item and `1. ` a numbered
