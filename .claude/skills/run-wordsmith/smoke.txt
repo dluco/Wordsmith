@@ -70,3 +70,39 @@ state composition-mode
 state show-binder
 do composition-mode
 state composition-mode
+
+# --- a join leaves one marker, at the head, and undo gives the lines back --
+# A deletion that joins two lines steps over the lower one's marker, which is
+# non-editable, and would strand it mid-line: drawn, belonging to nothing, and
+# skipped by save. The offsets are into chapter-two's seeded first line.
+pick chapter-two
+caret end
+type \n- one
+type \n
+type two
+text
+del 30 31
+text
+shows - onetwo
+do save
+wait 1
+expect Manuscript/chapter-two.md - onetwo
+do undo
+shows - one\n- two
+do save
+wait 1
+expect Manuscript/chapter-two.md - two
+
+# --- and a paragraph that swallows an item gives it back as an item --------
+del 24 25
+text
+shows sheets.one
+do save
+wait 1
+expect Manuscript/chapter-two.md sheets.one
+do undo
+text
+shows - one
+do save
+wait 1
+expect Manuscript/chapter-two.md - one

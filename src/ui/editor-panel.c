@@ -85,6 +85,11 @@ struct EditorPanel {
     UndoRecord* pending_delete;
     gboolean    applying;
 
+    /* Whether the deletion under way is about to join two lines, read on the way
+     * out because the range is the only thing that knows. A join is the one
+     * ordinary edit that can strand a list marker; see redraw_markers(). */
+    gboolean delete_joins_lines;
+
     /* Where the cursor was left by the last list a typed marker made, or -1.
      * Backspace there means "no, I meant a hyphen"; anything else at all
      * forgets it. See take_back_autoformat(). */
@@ -107,6 +112,10 @@ static void forget_asked_styles(EditorPanel* editor);
  * is captured before it lands, the same as a press of Bold. */
 static gboolean recording(EditorPanel* editor);
 static void     record_edit(EditorPanel* editor, UndoRecord* record);
+
+/* Defined with the insertion handlers, but owed by anything that edits the
+ * buffer from inside one of the buffer's own handlers. */
+static void revalidate(EditorPanel* editor, GtkTextIter* location);
 
 /* Record what the open document's buffer looks like as it is put away, so that
  * a history coming back can be checked against the text it claims to describe.
@@ -971,14 +980,58 @@ static void insert_marker(GtkTextBuffer* buffer, const EditorBlockTags* tags,
     gtk_text_buffer_insert_with_tags(buffer, &at, text, -1, tags->marker, NULL);
 }
 
-static void remove_marker(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+/* Take every marker off `line`, not only the one at its head.
+ *
+ * "A line carries one marker and it is at its head" is the invariant the rest of
+ * this file reads by — `line_kind()`, `editor_block_style_at()` and the save
+ * walk all ask the line's first character. A deletion that joins two lines can
+ * break it without ever reaching the buffer as an edit of the marker: the marker
+ * is non-editable, so `gtk_text_buffer_delete_interactive()` steps over it and
+ * leaves it stranded in the middle of the joined line, drawn but belonging to
+ * nothing. Save skips it, so the line on screen and the line in the manuscript
+ * come apart.
+ *
+ * Stripping the whole line rather than the head is what makes the invariant true
+ * by construction instead of assumed: a well-formed line has one marker and this
+ * is the same call, and a line that a join has left holding two comes out with
+ * neither. See redraw_markers(), which puts back the one the line's kind asks
+ * for. */
+static void strip_markers(GtkTextBuffer* buffer, const EditorBlockTags* tags,
                           int line)
 {
-    GtkTextIter start;
-    GtkTextIter end;
-    marker_bounds(buffer, tags, line, &start, &end);
-    if (gtk_text_iter_compare(&start, &end) < 0) {
-        gtk_text_buffer_delete(buffer, &start, &end);
+    if (tags->marker == NULL) {
+        return;
+    }
+
+    for (;;) {
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_line(buffer, &at, line);
+
+        GtkTextIter line_end = at;
+        if (!gtk_text_iter_ends_line(&line_end)) {
+            gtk_text_iter_forward_to_line_end(&line_end);
+        }
+
+        /* The head of the next marker run on the line. An iterator standing in
+         * the tag steps to the run's *end*, so a run starting at the line's
+         * first character has to be recognised rather than searched for. */
+        if (!gtk_text_iter_has_tag(&at, tags->marker)
+            && !gtk_text_iter_forward_to_tag_toggle(&at, tags->marker)) {
+            return;
+        }
+        if (gtk_text_iter_compare(&at, &line_end) >= 0) {
+            return;   /* the next one belongs to a line below */
+        }
+
+        GtkTextIter end = at;
+        if (!gtk_text_iter_forward_to_tag_toggle(&end, tags->marker)
+            || gtk_text_iter_compare(&end, &line_end) > 0) {
+            end = line_end;
+        }
+        if (gtk_text_iter_compare(&at, &end) >= 0) {
+            return;
+        }
+        gtk_text_buffer_delete(buffer, &at, &end);
     }
 }
 
@@ -998,7 +1051,7 @@ void editor_block_apply(GtkTextBuffer* buffer, const EditorBlockTags* tags,
     }
 
     for (int line = first_line; line <= last_line; line++) {
-        remove_marker(buffer, tags, line);
+        strip_markers(buffer, tags, line);
 
         GtkTextIter start;
         GtkTextIter end;
@@ -1092,6 +1145,76 @@ void editor_block_renumber(GtkTextBuffer* buffer, const EditorBlockTags* tags,
         gtk_text_buffer_apply_tag(buffer, tags->styles[EDITOR_BLOCK_NUMBERED_LIST],
                                   &start, &end);
     }
+}
+
+/* Draw each of [first_line, last_line] the marker its own kind asks for, and no
+ * other. The repair for an edit that changed which lines there are.
+ *
+ * **A marker is derived, and is never in the undo history.** It is drawn from
+ * the line's block tag, saved by regenerating it from the same tag, and put back
+ * here from that tag whenever an edit moves a line boundary — a deletion that
+ * joins two lines, or an undo that splits them again. Nothing records it,
+ * because a record of it would be a second answer to a question the block tag
+ * already answers, free to disagree with it.
+ *
+ * That is what lets the repair below run unrecorded, under `applying`, without
+ * an undo of the deletion putting a stranded marker back: the undo restores the
+ * text, and the marker is derived again from what the lines then are.
+ *
+ * It touches **markers and nothing else**, which is why it is not
+ * `editor_block_apply()` over the line. A join leaves the second line's own
+ * block tag on its half, invisible to every reader here — `line_kind()` and
+ * `editor_block_style_at()` both ask the line's *first* character — and that
+ * stale-looking tag is exactly what puts the line back as what it was when the
+ * join is undone. Clearing the line the way a pick does loses it, and undoing a
+ * paragraph that swallowed an item then hands back a paragraph. */
+static void redraw_markers(EditorPanel* editor, int first_line, int last_line)
+{
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+    if (tags.marker == NULL) {
+        return;
+    }
+
+    const int line_count = gtk_text_buffer_get_line_count(editor->buffer);
+    if (first_line < 0) {
+        first_line = 0;
+    }
+    if (last_line >= line_count) {
+        last_line = line_count - 1;
+    }
+
+    const gboolean was_applying = editor->applying;
+    editor->applying = TRUE;
+
+    for (int line = first_line; line <= last_line; line++) {
+        /* Before the strip, though the block tag would survive it: the answer is
+         * the line's first character, and that is the character about to go. */
+        const EditorBlockStyle style = editor_block_style_at(editor->buffer, &tags,
+                                                             line);
+        strip_markers(editor->buffer, &tags, line);
+        if (!block_style_is_list(style)) {
+            continue;
+        }
+
+        /* The marker wears the line's own block tag as well, the way a loaded
+         * item's does. Without it the first character of the line would answer
+         * "paragraph" and the line would lose the kind it still has. */
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_line(editor->buffer, &at, line);
+        gtk_text_buffer_insert_with_tags(
+            editor->buffer, &at,
+            style == EDITOR_BLOCK_NUMBERED_LIST ? "1. " : "- ", -1, tags.marker,
+            tags.styles[style], NULL);
+    }
+
+    /* A run reaches past what was touched, the same reason a pick renumbers once
+     * at the end rather than line by line. Only a line whose number is actually
+     * wrong is rewritten, so this moves no offset a record is holding — beyond
+     * the one place a number changes width, at the tenth item of a run. */
+    editor_block_renumber(editor->buffer, &tags, first_line - 1, last_line + 1);
+
+    editor->applying = was_applying;
 }
 
 /* The lines a press addresses: every one the selection touches, or the
@@ -1419,6 +1542,14 @@ static void on_range_deleting(GtkTextBuffer* buffer, GtkTextIter* start,
         forget_autoformat(editor);
     }
 
+    /* Whether this deletion is about to join two lines into one, which is the
+     * only way an ordinary edit can strand a marker. Read here because it stops
+     * being answerable the moment the range goes, and set before the recording
+     * question below: the repair is owed whether or not there is a history to
+     * put the deletion in. */
+    editor->delete_joins_lines =
+        gtk_text_iter_get_line(start) != gtk_text_iter_get_line(end);
+
     g_clear_pointer(&editor->pending_delete, undo_record_free);
     if (!recording(editor)) {
         return;
@@ -1432,13 +1563,29 @@ static void on_range_deleted(GtkTextBuffer* buffer, GtkTextIter* start,
                              GtkTextIter* end, gpointer user_data)
 {
     (void) buffer;
-    (void) start;
-    (void) end;
 
-    EditorPanel* editor    = user_data;
-    UndoRecord*  captured  = editor->pending_delete;
+    EditorPanel* editor = user_data;
+
+    /* Both ends have collapsed onto the join, so either says which line the two
+     * have become. Read before the record is pushed, though nothing there moves
+     * text, and before the repair, which does. */
+    const int      joined = gtk_text_iter_get_line(start);
+    const gboolean repair = editor->delete_joins_lines && !editor->applying;
+    editor->delete_joins_lines = FALSE;
+
+    UndoRecord* captured   = editor->pending_delete;
     editor->pending_delete = NULL;
     record_edit(editor, captured);
+
+    /* After the record and not before it: the deletions this makes come back
+     * through the handler above, which clears whatever is pending. Applying an
+     * undo is left alone here and repaired by editor_panel_apply_record(), so
+     * one edit is never redrawn twice. */
+    if (repair) {
+        redraw_markers(editor, joined, joined);
+        revalidate(editor, start);
+        revalidate(editor, end);
+    }
 }
 
 /* Typing, moving and selecting all move the insertion point, so one signal
@@ -2045,12 +2192,54 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
 
 /* One record of any kind but a compound. Split out so the compound arm has
  * something to call for each of its parts. */
+/* The lines a text record's own text covers once it has been applied, and
+ * whether it covers any: only a record carrying a **newline** can move a line
+ * boundary, and only a boundary moving can leave a marker where its line's kind
+ * does not want one. Plain typing put back inside an item cannot.
+ *
+ * Undoing a deletion that joined two lines splits them again, and the line that
+ * comes back wears its block tag with no marker drawn — the marker having been
+ * stripped, unrecorded, when the join happened. Redoing it joins them and
+ * strands one again. Both are the same repair, and it is the derivation rather
+ * than a record: see redraw_markers(). */
+static gboolean text_record_lines(const UndoRecord* record, GtkTextBuffer* buffer,
+                                  gboolean reverse, int* first, int* last)
+{
+    if ((record->kind != UNDO_TEXT_INSERT && record->kind != UNDO_TEXT_DELETE)
+        || record->text.text == NULL || strchr(record->text.text, '\n') == NULL) {
+        return FALSE;
+    }
+
+    /* Whether the text is in the buffer at the end of this, which is what says
+     * how far past `from` it now reaches. */
+    const gboolean present =
+        (record->kind == UNDO_TEXT_INSERT) ? !reverse : reverse;
+
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_offset(buffer, &at, record->text.from);
+    *first = gtk_text_iter_get_line(&at);
+
+    if (present) {
+        gtk_text_buffer_get_iter_at_offset(
+            buffer, &at,
+            record->text.from + (int) g_utf8_strlen(record->text.text, -1));
+    }
+    *last = gtk_text_iter_get_line(&at);
+    return TRUE;
+}
+
 static void apply_single_record(EditorPanel* editor, const UndoRecord* record,
                                 gboolean reverse)
 {
     if (record->kind != UNDO_BLOCK) {
         undo_record_apply(record, editor->buffer, editor->inline_tags,
                           INLINE_TAG_COUNT, reverse);
+
+        int first = 0;
+        int last  = 0;
+        if (text_record_lines(record, editor->buffer, reverse, &first, &last)) {
+            redraw_markers(editor, first, last);
+        }
         return;
     }
 

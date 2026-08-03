@@ -76,7 +76,8 @@ frontmatter.
 
 The canned regression script covers the app's signature behaviours — frontmatter
 staying out of the buffer, a style surviving the save round trip, undo, typing
-`- ` into a list, Enter carrying it, compound undo, and composition mode:
+`- ` into a list, Enter carrying it, compound undo, one marker per line across a
+join and back, and composition mode:
 
 ```sh
 S=$(mktemp -d)
@@ -105,6 +106,7 @@ It exits non-zero if any `expect` fails, and prints the file it read.
 | `buttons` | format bar: what the dropdown reads, which toggles are lit |
 | `press <widget-name>` | invoke a widget by accessible name |
 | `expect <file> <substring>` | assert against a file in the project; failing sets exit 1 |
+| `shows <substring>` | assert against the editor buffer; the same, for the screen |
 | `sh <cmd>` | shell, cwd is the project directory |
 | `logs` | the app's own stdout/stderr |
 | `wait [sec]`, `help`, `quit` | |
@@ -172,6 +174,14 @@ they are the first thing to run — the driver is for what they cannot reach.
   artifact.
 - **Offsets are character offsets**, the unit `GtkTextIter` counts in — the same
   rule the undo records follow. Do not count bytes.
+- **`expect` alone will pass a bug that only the author can see.** It reads what
+  save wrote, and save regenerates list markers from the block tags — so a marker
+  stranded in the middle of a line comes out of the file correct and off the
+  screen wrong. Assert both: `shows` for the buffer, `expect` for the file.
+- **`del` is not the Delete key.** AT-SPI's `DeleteText` calls
+  `gtk_text_buffer_delete()`, which deletes non-editable text too, where the key
+  goes through `delete_interactive()`, which steps over it. Both are worth
+  driving and they are not the same path.
 - **Frontmatter is not in the buffer.** `text` on `chapter-one` shows the body
   only; the `---` block is held aside verbatim and concatenated back on save.
   Assert on it with `expect`, which reads the file.

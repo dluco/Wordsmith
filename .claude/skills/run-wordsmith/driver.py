@@ -474,6 +474,25 @@ class Driver:
         if out.stderr.strip():
             self.say("(stderr) " + out.stderr.rstrip())
 
+    def cmd_shows(self, args):
+        """shows <substring> — assert the editor buffer contains it.
+
+        The counterpart to `expect`, and not the same question: `expect` reads
+        what save wrote, and a bug that leaves the manuscript right and the
+        screen wrong passes it. A stranded list marker is exactly that — save
+        skips marker-tagged text, so the file came out correct while the author
+        was looking at a stray `- ` in the middle of a line.
+        """
+        node = self.editor()
+        if node is None:
+            return self.fail("no editor text view")
+        needle = self._unescape(self.rest)
+        body = Atspi.Text.get_text(node, 0, Atspi.Text.get_character_count(node))
+        if needle in body:
+            self.say("ok  editor shows %r" % needle)
+        else:
+            self.fail("editor does not show %r\n--- actual ---\n%s" % (needle, body))
+
     def cmd_expect(self, args):
         """expect <file> <substring> — assert a file in the project contains it."""
         path = os.path.join(self.project, args[0])

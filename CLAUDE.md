@@ -580,11 +580,51 @@ asks to have back, and taking the list off instead would take them with it. It
 is deliberately not offered a second door on `delete-from-cursor`: a chord that
 deletes a word or a line is not an author saying "I meant a hyphen".
 
-What this does **not** reach is a deletion the buffer performs itself rather than
-a key binding raising — a selection spanning two items still skips the second
-marker and strands it mid-line. That one wants an answer at `delete-range`, and
-it is not the same answer: the repair would have to ride in the same undo record
-as the deletion it corrects.
+What this does not reach is a deletion the buffer performs itself rather than a
+key binding raising — a selection spanning two items, a cut, a paste over one, a
+drag. Those get the answer below instead, which is a different one.
+
+### One marker per line, and the buffer draws it
+
+**A marker is derived, and is never in the undo history.** The block tag is the
+only record that a line is an item; the `- ` is drawn from it, saved by
+regenerating it from it, and redrawn from it whenever an edit moves a line
+boundary. A record of the marker would be a second answer to a question the
+block tag already answers, free to disagree with it.
+
+That is what makes the repair below possible at all. A deletion that **joins two
+lines** strands the lower line's marker in the middle of the joined one — the
+marker is non-editable, so `gtk_text_buffer_delete_interactive()` steps over it
+and deletes around it. It is then drawn but belongs to nothing, and save skips
+it, so `- one` + `- two` showed `- on- wo` and saved `- onwo`. Every door the
+key bindings above do not cover arrives here: cut, paste over a selection, drag,
+and a selection deletion the keys hand to the buffer whole.
+
+`redraw_markers()` is the repair, and `strip_markers()` is what makes "one
+marker, at the head" true by construction rather than assumed — it takes every
+marker off the line, so a well-formed line comes out unchanged and a joined one
+comes out with neither, and then the line's own kind draws the one it wants.
+`editor_block_apply()` goes through it too, so a pick cleans a line up the same
+way.
+
+Two things it deliberately does not do:
+
+- It touches **markers and nothing else**, and is not `editor_block_apply()` over
+  the line. A join leaves the second line's own block tag on its half, invisible
+  to every reader here — `line_kind()` and `editor_block_style_at()` both ask the
+  line's *first* character — and that stale-looking tag is precisely what puts
+  the line back as what it was when the join is undone. Clearing the line the way
+  a pick does loses it, and undoing a paragraph that swallowed an item then hands
+  back a paragraph. It did exactly that until the end-to-end run caught it.
+- It makes **no undo record**, running under `applying`. It does not need one:
+  undoing the deletion restores the text, and the marker is derived again from
+  what the lines then are. `apply_single_record()` is the other call site, for a
+  text record carrying a **newline** — the only kind that can move a boundary, in
+  either direction. Plain typing put back inside an item cannot.
+
+The strays sit exactly at the join, which is the offset the deletion's own record
+already holds, so stripping them moves nothing that record is pointing at. The
+one place a redraw does change a width is the tenth item of a numbered run.
 
 ### Typing a list into being
 

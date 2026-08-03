@@ -561,6 +561,65 @@ static void test_leaving_a_list_keeps_the_words(void)
     fixture_clear(&fixture);
 }
 
+/* Tag [from, to) of `line` as a marker, which is how a line comes to hold one
+ * that is not at its head: a deletion joining two items steps over the second
+ * marker, being non-editable, and leaves it stranded mid-line. */
+static void tag_marker(Fixture* fixture, int line, int from, int to)
+{
+    GtkTextIter start;
+    GtkTextIter end;
+    gtk_text_buffer_get_iter_at_line_offset(fixture->buffer, &start, line, from);
+    gtk_text_buffer_get_iter_at_line_offset(fixture->buffer, &end, line, to);
+    gtk_text_buffer_apply_tag(fixture->buffer, fixture->tags.marker, &start, &end);
+}
+
+/* A line carries one marker and it is at its head. Applying a style is what
+ * makes that true rather than assumes it, because a join can leave two behind
+ * and the words on screen then differ from the words save writes. */
+static void test_a_line_keeps_one_marker(void)
+{
+    Fixture fixture;
+
+    /* What a deletion from the middle of one item to the middle of the next
+     * leaves: the words joined, and the second item's marker stranded between
+     * them, drawn but belonging to nothing. */
+    fixture_init(&fixture, "- on- wo\n");
+    tag_marker(&fixture, 0, 0, 2);
+    tag_marker(&fixture, 0, 4, 6);
+    tag_line(&fixture, fixture.tags.styles[EDITOR_BLOCK_BULLET_LIST], 0);
+
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_BULLET_LIST);
+
+    /* One marker, at the head — and the words are what save would have written
+     * all along, the stranded one having never been part of them. */
+    assert_line(&fixture, 0, "- onwo");
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_BULLET_LIST);
+    fixture_clear(&fixture);
+
+    /* The same line taken out of the list keeps its words and loses both. */
+    fixture_init(&fixture, "- on- wo\n");
+    tag_marker(&fixture, 0, 0, 2);
+    tag_marker(&fixture, 0, 4, 6);
+    tag_line(&fixture, fixture.tags.styles[EDITOR_BLOCK_BULLET_LIST], 0);
+
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_PARAGRAPH);
+    assert_line(&fixture, 0, "onwo");
+    fixture_clear(&fixture);
+
+    /* And a numbered run counts from what is left, not from what was drawn. */
+    fixture_init(&fixture, "1. a1. b\n1. c\n");
+    tag_marker(&fixture, 0, 0, 3);
+    tag_marker(&fixture, 0, 4, 7);
+    tag_marker(&fixture, 1, 0, 3);
+    tag_line(&fixture, fixture.tags.styles[EDITOR_BLOCK_NUMBERED_LIST], 0);
+    tag_line(&fixture, fixture.tags.styles[EDITOR_BLOCK_NUMBERED_LIST], 1);
+
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_NUMBERED_LIST);
+    assert_line(&fixture, 0, "1. ab");
+    assert_line(&fixture, 1, "2. c");
+    fixture_clear(&fixture);
+}
+
 /* The names and the ids are one table read two ways, and the round trip is
  * what four places agreeing on a style rests on. */
 static void test_every_style_has_a_name_and_an_id(void)
@@ -636,6 +695,7 @@ int main(int argc, char* argv[])
     g_test_add_func("/block-style/backspace-leaves-a-list",
                     test_a_backspace_leaves_a_list);
     g_test_add_func("/block-style/delete-leaves-a-list", test_a_delete_leaves_a_list);
+    g_test_add_func("/block-style/one-marker-per-line", test_a_line_keeps_one_marker);
     g_test_add_func("/block-style/leaving-a-list-keeps-the-words",
                     test_leaving_a_list_keeps_the_words);
     g_test_add_func("/block-style/names-and-ids",
