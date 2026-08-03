@@ -180,10 +180,15 @@ they are the first thing to run — the driver is for what they cannot reach.
   test. `logs` prints it.
 - **`win.new-project` and `win.open-project` open a `GtkFileChooser`**, the one
   surface the driver cannot reach. Make projects with `new-project.sh` instead.
-- **Keys that are not actions cannot be synthesised.** Backspace against a list
-  marker is caught at `GtkTextView::backspace` rather than as an action, so the
-  `take_back_autoformat()` path is not reachable this way; `do undo` is the same
-  verb and is. That path has headless coverage in `tests/ui/`.
+- **Keys that are not actions cannot be synthesised.** The deleting keys are
+  caught at `GtkTextView::backspace` and `::delete-from-cursor` rather than as
+  actions, so neither `take_back_autoformat()` nor the rule that takes a list off
+  when a press runs into its marker is reachable this way; `do undo` is the same
+  verb as the first and is. Both have headless coverage in `tests/ui/`, and the
+  signal path itself can be driven from a throwaway program: a `GtkTextView` need
+  not be realised to emit `delete-from-cursor`, so `g_signal_emit_by_name(view,
+  "delete-from-cursor", GTK_DELETE_CHARS, 1)` over a buffer with marker tags in
+  it exercises the real handlers with no display at all.
 
 ## Troubleshooting
 

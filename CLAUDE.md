@@ -529,37 +529,62 @@ Google Docs' assignment. Each carries the shifted symbol as an alternate for the
 reason the text size does: on a US or UK layout Ctrl+Shift+7 reaches the keymap
 as `ampersand`.
 
-### Backspace at a marker
+### Deleting at a marker
 
-The other way out of a list, and the one an author reaches for first: a
-backspace with the caret **within the marker's reach** — anywhere from the head
-of the line to the far side of the `- ` — turns that item back into a paragraph
-rather than deleting anything. Joining an item to the line above is then two
-presses, one to stop being an item and one to merge, which is what Word and
-Google Docs do.
+The other way out of a list, and the one an author reaches for first: **a
+deleting key that runs into a marker is spent taking that marker off.** The item
+becomes a paragraph, nothing is deleted, and the words stay. Joining an item to
+its neighbour is then two presses — one to stop being an item, one to merge —
+which is what Word and Google Docs do.
 
-It is a rule rather than something left to the buffer because a marker is
-**tagged non-editable**, and that made both halves of the line's head wrong:
+It has to be a rule rather than something left to the buffer because a marker is
+**tagged non-editable**, which makes a deletion near one wrong in one of two
+ways:
 
-- Just past the marker, `gtk_text_buffer_backspace()` refuses the deletion
-  outright and *nothing happens*. Deleting the last word of an item left the
-  caret behind a `- ` that no key would remove — the bug this fixes.
-- At column 0 the press is not refused but is worse: it joins the line to the
-  one above and carries the marker into the middle of it, where nothing draws it
-  as a marker and save drops it. The characters on screen and the characters in
-  the manuscript come apart.
+- A range that is nothing but marker is **refused outright** by
+  `gtk_text_buffer_delete_interactive()`, so the key does nothing whatsoever.
+  Deleting an item's last word and pressing Backspace again left the caret stuck
+  behind a `- ` no key would remove; Delete at the head of an item is the same
+  press from the other side.
+- A range that **crosses the line boundary** is not refused, and is worse: the
+  newline goes, the marker is skipped, and it lands mid-line, where nothing
+  draws it as a marker and save drops it. `- one` + Delete + `- two` showed
+  `- one- two` and saved `- onetwo` — the screen and the manuscript come apart.
 
-`editor_backspace_leaves_list()` is the display-free seam and the whole of the
-rule, the shape `editor_return_action()` is. The line then goes through
-`editor_panel_set_block_style()` like any other pick, so leaving a list this way,
-picking Paragraph from the dropdown and pressing a lit list button are one path
-and one record — it reads "Undo Paragraph" and costs one press to take back.
+Two display-free seams are the whole of it, in the shape `editor_return_action()`
+is. `editor_delete_leaves_list()` answers for the caret's **own** line, and the
+two directions reach differently at the ends, each stopping where its own
+justification runs out: backward from column 0 drags the marker onto the line
+above, backward from the marker's far side is the refusal; forward from column 0
+is the refusal, and forward from the far side is the author's own text.
+`editor_delete_leaves_next_list()` answers for the line **below**, which the
+caret's own line cannot see — a forward press at the end of a line eats the
+newline first, whatever else it goes on to eat.
 
-`take_back_autoformat()` is asked **first**, because where a marker has just been
-made out of typed characters those characters are what the press asks to have
-back; taking the list off instead would take them with it. Both live on
-`GtkTextView::backspace`, that being the only place a press against
-non-editable text can still be seen, and both stop the emission.
+Both are asked of **every** deleting key: `GtkTextView::backspace`, and
+`delete-from-cursor` for Delete, Ctrl+Delete, Ctrl+Backspace and the two
+line-clearing chords. Which key it was does not change what a marker in the way
+is worth, and a rule that held for one of them would be one an author could only
+find by accident. Those two signals are the only place a press against
+non-editable text can still be seen, and both handlers stop the emission.
+
+The line goes through `set_block_style_over()` — the body of
+`editor_panel_set_block_style()`, split out because these presses address a line
+the cursor is not standing on. So leaving a list this way, picking Paragraph
+from the dropdown and pressing a lit list button are one path and one record: it
+reads "Undo Paragraph" and costs one press to take back.
+
+`take_back_autoformat()` is asked **first** on Backspace, because where a marker
+has just been made out of typed characters those characters are what the press
+asks to have back, and taking the list off instead would take them with it. It
+is deliberately not offered a second door on `delete-from-cursor`: a chord that
+deletes a word or a line is not an author saying "I meant a hyphen".
+
+What this does **not** reach is a deletion the buffer performs itself rather than
+a key binding raising — a selection spanning two items still skips the second
+marker and strands it mid-line. That one wants an answer at `delete-range`, and
+it is not the same answer: the repair would have to ride in the same undo record
+as the deletion it corrects.
 
 ### Typing a list into being
 
@@ -589,8 +614,8 @@ keystroke, a deletion, the caret moving. The one difference is where the caret
 is left: undo lands it on the line it changed, as any block undo does, while a
 backspace leaves it after the `- ` that just came back, or the next press would
 join the line to the one above instead of eating the marker. Which is also why
-this is the question `on_backspace` asks first — see Backspace at a marker
-above, whose answer would take those characters away with the list.
+this is the question `on_backspace` asks first — see Deleting at a marker above,
+whose answer would take those characters away with the list.
 
 `editor_autoformat_style()` is the display-free seam and the whole of the rule,
 the same shape `editor_return_action()` is. It is deliberately narrow, because

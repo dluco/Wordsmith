@@ -258,46 +258,78 @@ EditorReturnAction editor_return_action(const char* text, int length,
                                         EditorBlockStyle line_style,
                                         gboolean line_is_bare);
 
-/** Whether a backspace pressed at `cursor_column` characters into a line that is
+/* A list marker is **tagged non-editable**, and that makes a deletion pressed
+ * anywhere near one wrong in one of two ways, whichever key raised it:
+ *
+ *   - a range that is nothing but marker is **refused outright** by
+ *     `gtk_text_buffer_delete_interactive()`, so the key does nothing at all.
+ *     Deleting the last word of an item and pressing Backspace once more left
+ *     the caret behind a `- ` that no key would remove and no menu obviously
+ *     governed; Delete at the head of an item is the same press from the other
+ *     side.
+ *   - a range that **crosses the line boundary** is not refused, and is worse:
+ *     the newline goes, the marker is skipped, and it lands in the middle of the
+ *     joined line — where nothing draws it as a marker and save drops it. The
+ *     characters on screen and the characters in the manuscript come apart.
+ *
+ * So a press that runs into a marker, from either side, is **spent taking that
+ * marker off**: the line stops being an item and nothing is deleted. That is
+ * what Word and Google Docs do, and it makes the way out of a list the key an
+ * author reaches for first. Joining an item to its neighbour is then two
+ * presses — one to stop being an item, one to merge.
+ *
+ * The line goes through `editor_panel_set_block_style()` like any other pick, so
+ * it is one press to take back and reads "Undo Paragraph" in the Edit menu.
+ *
+ * The two seams below are the whole of the rule, in the shape
+ * `editor_return_action()` is, and columns are **character** offsets — the unit
+ * `GtkTextIter` counts in. Both are asked of every deleting key: `backspace`,
+ * and `delete-from-cursor` for Delete, Ctrl+Delete, Ctrl+Backspace and the two
+ * line-clearing chords. Which key it was does not change what a marker in the
+ * way is worth, and a rule that held for one of them would be a rule an author
+ * could only find by accident. */
+
+/** Whether a deletion pressed at `cursor_column` characters into a line that is
  *  `line_style` and draws a marker `marker_chars` wide means "this line is not
- *  an item" rather than a deletion. `has_selection` is whether there is one, a
- *  backspace over a selection being a deletion of it and nothing else.
+ *  an item" rather than a deletion. `forward` is the direction the press eats
+ *  in; `has_selection` is whether there is one, a deleting key over a selection
+ *  being a deletion of it and nothing else.
  *
- *  Backspace is how an author leaves a list, and until this it was how they
- *  found they could not: **a marker is tagged non-editable**, so a press against
- *  one is refused by `gtk_text_buffer_backspace()` and does nothing whatsoever.
- *  Deleting the last word of an item left the caret sitting behind a `- ` that
- *  no key would remove and no menu obviously governed.
+ *  The caret has to be **within the marker's reach**, and the two directions
+ *  reach differently at the ends — each stopping where its own justification
+ *  runs out:
  *
- *  The rule is the caret being **within the marker's reach** — anywhere from the
- *  head of the line to the far side of the marker — because that is the whole of
- *  where the marker is what a backspace runs into:
- *
- *    - inside it or just past it, the press is refused outright, which is the
- *      bug as reported;
- *    - at column 0 it is not refused but is worse, joining the line to the one
- *      above and carrying the marker into the middle of it, where nothing draws
- *      it as a marker and save drops it — the characters on screen and the
- *      characters in the manuscript come apart.
- *
- *  Either way the press is spent on leaving the list rather than on text, which
- *  is what Word and Google Docs do and what makes the way out of a list the key
- *  an author reaches for first. Joining an item to the line above is then two
- *  presses: one to stop being an item, one to merge. The line goes through
- *  `editor_panel_set_block_style()` like any other pick, so it is one press to
- *  take back and reads "Undo Paragraph" in the Edit menu.
+ *    - backward from column 0 does not touch the marker, but drags it onto the
+ *      line above; backward from the marker's far side is the refusal.
+ *    - forward from column 0 is the refusal; forward from the far side is the
+ *      author's own text, which deletes like any other character.
  *
  *  Where a marker has *just* been made out of typed characters, taking back that
  *  conversion is what a backspace means instead — it is checked first, or the
  *  `- ` the author typed would go with the list rather than coming back as the
- *  hyphen they meant. See "typing a list into being" below.
+ *  hyphen they meant. See "typing a list into being" below. */
+gboolean editor_delete_leaves_list(gboolean has_selection, gboolean forward,
+                                   EditorBlockStyle line_style,
+                                   int marker_chars, int cursor_column);
+
+/** Whether a forward deletion at the end of a line means "the line *below* is
+ *  not an item", `next_line_style` and `next_marker_chars` describing that line.
  *
- *  Columns are **character** offsets, the unit `GtkTextIter` counts in. The
- *  display-free seam for the whole rule, the shape `editor_return_action()`
- *  is. */
-gboolean editor_backspace_leaves_list(gboolean has_selection,
-                                      EditorBlockStyle line_style,
-                                      int marker_chars, int cursor_column);
+ *  The other half of the boundary, and the half the caret's own line cannot see:
+ *  a forward press at the end of a line eats the newline first, whatever else it
+ *  goes on to eat, so the marker below is dragged up into the middle of this
+ *  line. The press is spent taking that marker off — the same answer as the
+ *  backward case above gives to the same crossing, approached from the other
+ *  side.
+ *
+ *  `at_line_end` is asked rather than worked out from a column, a line's end
+ *  being where its text stops and its newline begins, which no column can be
+ *  compared against without the line to hand. On the buffer's last line there is
+ *  nothing below to drag, and the caller says so with EDITOR_BLOCK_OTHER. */
+gboolean editor_delete_leaves_next_list(gboolean has_selection,
+                                        gboolean at_line_end,
+                                        EditorBlockStyle next_line_style,
+                                        int next_marker_chars);
 
 /* ── typing a list into being ────────────────────────────────────────────── */
 

@@ -1182,14 +1182,26 @@ EditorReturnAction editor_return_action(const char* text, int length,
     return line_is_bare ? EDITOR_RETURN_END_LIST : EDITOR_RETURN_CONTINUE_LIST;
 }
 
-gboolean editor_backspace_leaves_list(gboolean has_selection,
-                                      EditorBlockStyle line_style,
-                                      int marker_chars, int cursor_column)
+gboolean editor_delete_leaves_list(gboolean has_selection, gboolean forward,
+                                   EditorBlockStyle line_style,
+                                   int marker_chars, int cursor_column)
 {
-    if (has_selection || !block_style_is_list(line_style) || marker_chars <= 0) {
+    if (has_selection || !block_style_is_list(line_style) || marker_chars <= 0
+        || cursor_column < 0) {
         return FALSE;
     }
-    return cursor_column >= 0 && cursor_column <= marker_chars;
+    /* The far side of the marker is the author's own text going forwards and the
+     * marker's own last character coming back, so only one direction takes it. */
+    return forward ? cursor_column < marker_chars : cursor_column <= marker_chars;
+}
+
+gboolean editor_delete_leaves_next_list(gboolean has_selection,
+                                        gboolean at_line_end,
+                                        EditorBlockStyle next_line_style,
+                                        int next_marker_chars)
+{
+    return !has_selection && at_line_end && block_style_is_list(next_line_style)
+        && next_marker_chars > 0;
 }
 
 /* Whether a typed marker makes a list, read from the config file the first time
@@ -1270,28 +1282,20 @@ EditorBlockStyle editor_panel_block_style_at_cursor(EditorPanel* editor)
     return block_style_over(editor->buffer, &tags, first, last);
 }
 
-void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
+/* Make [first_line, last_line] a block of `style`, the pick's whole rule and its
+ * record, over lines the caller has chosen.
+ *
+ * Split out from the verb below because the deleting keys address a line the
+ * cursor is not standing on: a forward press at the end of a line takes the item
+ * *below* out of its list. Everything a pick means — the "off" rule, what goes
+ * in the record, the marker — has to be the same for both, so there is one body
+ * and two ways in rather than a second path that could grow a rule this one
+ * lacks. */
+static void set_block_style_over(EditorPanel* editor, int first, int last,
+                                 EditorBlockStyle style)
 {
-    if (editor == NULL || !block_style_offered(style)) {
-        return;
-    }
-
-    /* A pick the editor does nothing with still gets an answer, because the
-     * dropdown has already moved itself to show it. The buttons can be left
-     * alone in this case — a toggle that was not acted on is still showing the
-     * last true thing it was told — but a dropdown would sit there naming a
-     * style for a document that is not open. Reporting puts it back. */
-    if (editor->path == NULL) {
-        notify_format(editor);
-        return;
-    }
-
     EditorBlockTags tags;
     block_tags(editor, &tags);
-
-    int first = 0;
-    int last  = 0;
-    block_lines_at_cursor(editor->buffer, &first, &last);
 
     /* What the press actually means here — a list asked for where one already
      * covers the whole of what is addressed is a list being taken off. */
@@ -1339,6 +1343,28 @@ void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
     note_style_change(editor);
     record_edit(editor, captured);
     notify_format(editor);
+}
+
+void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
+{
+    if (editor == NULL || !block_style_offered(style)) {
+        return;
+    }
+
+    /* A pick the editor does nothing with still gets an answer, because the
+     * dropdown has already moved itself to show it. The buttons can be left
+     * alone in this case — a toggle that was not acted on is still showing the
+     * last true thing it was told — but a dropdown would sit there naming a
+     * style for a document that is not open. Reporting puts it back. */
+    if (editor->path == NULL) {
+        notify_format(editor);
+        return;
+    }
+
+    int first = 0;
+    int last  = 0;
+    block_lines_at_cursor(editor->buffer, &first, &last);
+    set_block_style_over(editor, first, last, style);
 }
 
 /* ── recording edits ─────────────────────────────────────────────────────── */
@@ -1647,16 +1673,34 @@ static gboolean take_back_autoformat(EditorPanel* editor)
     return TRUE;
 }
 
-/* Backspace within the reach of a list item's marker: the item becomes a
- * paragraph, and the press is spent on that rather than on the text.
+/* How wide the marker `line` draws is, in characters — 0 where it draws none. */
+static int marker_width(EditorPanel* editor, const EditorBlockTags* tags, int line)
+{
+    if (line < 0 || line >= gtk_text_buffer_get_line_count(editor->buffer)) {
+        return 0;
+    }
+    GtkTextIter start;
+    GtkTextIter end;
+    marker_bounds(editor->buffer, tags, line, &start, &end);
+    return gtk_text_iter_get_offset(&end) - gtk_text_iter_get_offset(&start);
+}
+
+/* A deleting key pressed where a list marker is in the way: that item becomes a
+ * paragraph, and the press is spent on it rather than on the text. `forward` is
+ * the direction the key eats in.
  *
- * `editor_backspace_leaves_list()` is the rule and why. This half only reads the
- * three things it asks about, and hands the line to the ordinary verb — so
- * leaving a list this way and picking Paragraph from the dropdown are one path,
- * one record and one press to take back.
+ * `editor_delete_leaves_list()` and `editor_delete_leaves_next_list()` are the
+ * rule and why. This half only reads what they ask about and hands the line to
+ * the ordinary verb, so leaving a list this way and picking Paragraph from the
+ * dropdown are one path, one record and one press to take back.
  *
- * Returns whether the backspace was spent here. */
-static gboolean leave_list(EditorPanel* editor)
+ * The two are asked in the order the press meets them — the caret's own line
+ * before the line below — and the first to answer is the answer. On a bare item
+ * both are in reach of a forward press, and the marker it runs into first is the
+ * one below, this line's own being behind the caret.
+ *
+ * Returns whether the press was spent here. */
+static gboolean leave_list(EditorPanel* editor, gboolean forward)
 {
     if (editor->path == NULL) {
         return FALSE;
@@ -1668,25 +1712,40 @@ static gboolean leave_list(EditorPanel* editor)
                                      gtk_text_buffer_get_insert(editor->buffer));
     gtk_text_buffer_get_iter_at_mark(
         editor->buffer, &bound, gtk_text_buffer_get_selection_bound(editor->buffer));
+    const gboolean has_selection = !gtk_text_iter_equal(&cursor, &bound);
 
     EditorBlockTags tags;
     block_tags(editor, &tags);
     const int line = gtk_text_iter_get_line(&cursor);
 
-    GtkTextIter marker_start;
-    GtkTextIter marker_end;
-    marker_bounds(editor->buffer, &tags, line, &marker_start, &marker_end);
+    if (editor_delete_leaves_list(has_selection, forward,
+                                  editor_block_style_at(editor->buffer, &tags, line),
+                                  marker_width(editor, &tags, line),
+                                  gtk_text_iter_get_line_offset(&cursor))) {
+        set_block_style_over(editor, line, line, EDITOR_BLOCK_PARAGRAPH);
+        return TRUE;
+    }
 
-    if (!editor_backspace_leaves_list(
-            !gtk_text_iter_equal(&cursor, &bound),
-            editor_block_style_at(editor->buffer, &tags, line),
-            gtk_text_iter_get_offset(&marker_end)
-                - gtk_text_iter_get_offset(&marker_start),
-            gtk_text_iter_get_line_offset(&cursor))) {
+    if (!forward) {
         return FALSE;
     }
 
-    editor_panel_set_block_style(editor, EDITOR_BLOCK_PARAGRAPH);
+    /* The line below, which is what a forward press at the end of a line reaches
+     * over the newline for. EDITOR_BLOCK_OTHER on the last line says there is
+     * nothing under it to drag. */
+    const int  below     = line + 1;
+    const gboolean below_exists = below < gtk_text_buffer_get_line_count(editor->buffer);
+    if (!editor_delete_leaves_next_list(
+            has_selection, gtk_text_iter_ends_line(&cursor),
+            below_exists ? editor_block_style_at(editor->buffer, &tags, below)
+                         : EDITOR_BLOCK_OTHER,
+            marker_width(editor, &tags, below))) {
+        return FALSE;
+    }
+
+    /* The caret stays where it is: the line it stands on is not the line that
+     * changed, and the author has asked for nothing to move. */
+    set_block_style_over(editor, below, below, EDITOR_BLOCK_PARAGRAPH);
     return TRUE;
 }
 
@@ -1695,10 +1754,27 @@ static void on_backspace(GtkTextView* view, gpointer user_data)
     /* The conversion first: where a marker was just made out of typed
      * characters, they are what the press asks to have back, and taking the
      * list off instead would take them with it. */
-    if (take_back_autoformat(user_data) || leave_list(user_data)) {
+    if (take_back_autoformat(user_data) || leave_list(user_data, FALSE)) {
         /* Connected in the ordinary phase, so stopping the emission is what
          * keeps GtkTextView's own binding from deleting a character as well. */
         g_signal_stop_emission_by_name(view, "backspace");
+    }
+}
+
+/* Delete, Ctrl+Delete, Ctrl+Backspace and the two line-clearing chords all
+ * arrive here rather than at "backspace", and all of them can run into a marker.
+ * `count`'s sign is the direction every one of the delete types eats in.
+ *
+ * The autoformat take-back is deliberately not offered a second door: it answers
+ * the press immediately after a marker made itself, which is Backspace, and a
+ * chord that deletes a word or a line is not an author saying "I meant a
+ * hyphen". */
+static void on_delete_from_cursor(GtkTextView* view, GtkDeleteType type, int count,
+                                  gpointer user_data)
+{
+    (void) type;
+    if (count != 0 && leave_list(user_data, count > 0)) {
+        g_signal_stop_emission_by_name(view, "delete-from-cursor");
     }
 }
 
@@ -2159,10 +2235,13 @@ EditorPanel* editor_panel_new(void)
                            G_CALLBACK(on_range_deleted), editor);
 
     /* On the view rather than the buffer: a marker is tagged non-editable, so a
-     * backspace against one never reaches the buffer as a deletion at all.
-     * "backspace" is the key binding itself, which is the only place the press
-     * can still be seen. */
+     * deletion against one is refused and never reaches the buffer at all. These
+     * two are the key bindings themselves, which is the only place the press can
+     * still be seen — "backspace" for Backspace, and "delete-from-cursor" for
+     * Delete and every chord that deletes a word or a line. */
     g_signal_connect(editor->view, "backspace", G_CALLBACK(on_backspace), editor);
+    g_signal_connect(editor->view, "delete-from-cursor",
+                     G_CALLBACK(on_delete_from_cursor), editor);
 
     /* After the panel's own handlers, deliberately: a decoration should read
      * the text as the panel has finished leaving it. Text typed into a code

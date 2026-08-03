@@ -441,42 +441,107 @@ static void test_a_return_carries_a_list_on(void)
  * refuses it and leaves them stuck behind a `- ` no key removes. */
 static void test_a_backspace_leaves_a_list(void)
 {
+    const gboolean back = FALSE;
+
     /* Just past the marker, which is where deleting the last word of an item
      * leaves the caret. This is the press that did nothing at all. */
-    g_assert_true(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_BULLET_LIST, 2, 2));
     g_assert_true(
-        editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_NUMBERED_LIST, 3, 3));
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_BULLET_LIST, 2, 2));
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_NUMBERED_LIST, 3, 3));
 
     /* Inside it, which arrow keys can reach: the press is refused there too. */
-    g_assert_true(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_BULLET_LIST, 2, 1));
     g_assert_true(
-        editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_NUMBERED_LIST, 3, 2));
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_BULLET_LIST, 2, 1));
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_NUMBERED_LIST, 3, 2));
 
     /* And at the head of the line, where the press is not refused but is worse:
      * it would carry the marker into the middle of the line above, where
      * nothing draws it and save drops it. */
-    g_assert_true(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_BULLET_LIST, 2, 0));
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_BULLET_LIST, 2, 0));
 
     /* Past the marker is the author's own text, and a backspace there deletes a
      * character like anywhere else. */
-    g_assert_false(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_BULLET_LIST, 2, 3));
     g_assert_false(
-        editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_BULLET_LIST, 2, 12));
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_BULLET_LIST, 2, 3));
+    g_assert_false(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_BULLET_LIST, 2, 12));
 
     /* A backspace over a selection deletes the selection, wherever it starts. */
-    g_assert_false(editor_backspace_leaves_list(TRUE, EDITOR_BLOCK_BULLET_LIST, 2, 2));
-    g_assert_false(editor_backspace_leaves_list(TRUE, EDITOR_BLOCK_BULLET_LIST, 2, 0));
+    g_assert_false(
+        editor_delete_leaves_list(TRUE, back, EDITOR_BLOCK_BULLET_LIST, 2, 2));
+    g_assert_false(
+        editor_delete_leaves_list(TRUE, back, EDITOR_BLOCK_BULLET_LIST, 2, 0));
 
     /* Every other kind draws no marker, so nothing stands in the way of an
      * ordinary deletion. */
-    g_assert_false(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_PARAGRAPH, 0, 0));
-    g_assert_false(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_QUOTE, 0, 0));
-    g_assert_false(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_HEADING_1, 0, 0));
-    g_assert_false(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_OTHER, 0, 0));
+    g_assert_false(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_PARAGRAPH, 0, 0));
+    g_assert_false(editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_QUOTE, 0, 0));
+    g_assert_false(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_HEADING_1, 0, 0));
+    g_assert_false(editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_OTHER, 0, 0));
 
     /* A list with no marker to run into is not this rule's business either —
      * there is nothing there a deletion could be refused by. */
-    g_assert_false(editor_backspace_leaves_list(FALSE, EDITOR_BLOCK_BULLET_LIST, 0, 0));
+    g_assert_false(
+        editor_delete_leaves_list(FALSE, back, EDITOR_BLOCK_BULLET_LIST, 0, 0));
+}
+
+/* Delete is the same rule from the other side, and it reaches one line further:
+ * a forward press at the end of a line eats the newline, so the marker below is
+ * what it runs into. */
+static void test_a_delete_leaves_a_list(void)
+{
+    const gboolean forward = TRUE;
+
+    /* At the head of an item, and inside the marker: the marker is what lies
+     * ahead, so the press is refused and does nothing. */
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, forward, EDITOR_BLOCK_BULLET_LIST, 2, 0));
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, forward, EDITOR_BLOCK_BULLET_LIST, 2, 1));
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, forward, EDITOR_BLOCK_NUMBERED_LIST, 3, 2));
+
+    /* The far side of the marker is where the two directions differ, and each
+     * takes the column its own reason reaches: forward from here is the author's
+     * first character, which deletes like any other. */
+    g_assert_false(
+        editor_delete_leaves_list(FALSE, forward, EDITOR_BLOCK_BULLET_LIST, 2, 2));
+    g_assert_true(
+        editor_delete_leaves_list(FALSE, FALSE, EDITOR_BLOCK_BULLET_LIST, 2, 2));
+
+    /* And a selection is what a delete over one deletes. */
+    g_assert_false(
+        editor_delete_leaves_list(TRUE, forward, EDITOR_BLOCK_BULLET_LIST, 2, 0));
+
+    /* The line below, which is the case the caret's own line cannot see. */
+    g_assert_true(
+        editor_delete_leaves_next_list(FALSE, TRUE, EDITOR_BLOCK_BULLET_LIST, 2));
+    g_assert_true(
+        editor_delete_leaves_next_list(FALSE, TRUE, EDITOR_BLOCK_NUMBERED_LIST, 3));
+
+    /* Only from the end of a line: anywhere else the newline is not in the
+     * range, so no marker crosses. */
+    g_assert_false(
+        editor_delete_leaves_next_list(FALSE, FALSE, EDITOR_BLOCK_BULLET_LIST, 2));
+
+    /* A plain line below carries nothing that must not cross, and the last line
+     * of the buffer has nothing below it at all. */
+    g_assert_false(
+        editor_delete_leaves_next_list(FALSE, TRUE, EDITOR_BLOCK_PARAGRAPH, 0));
+    g_assert_false(
+        editor_delete_leaves_next_list(FALSE, TRUE, EDITOR_BLOCK_HEADING_1, 0));
+    g_assert_false(editor_delete_leaves_next_list(FALSE, TRUE, EDITOR_BLOCK_OTHER, 0));
+    g_assert_false(
+        editor_delete_leaves_next_list(FALSE, TRUE, EDITOR_BLOCK_BULLET_LIST, 0));
+
+    /* And a selection is deleted rather than read as a press against a marker. */
+    g_assert_false(
+        editor_delete_leaves_next_list(TRUE, TRUE, EDITOR_BLOCK_BULLET_LIST, 2));
 }
 
 /* The way out has to leave the words behind: taking the item off is a block
@@ -570,6 +635,7 @@ int main(int argc, char* argv[])
                     test_a_converted_line_gives_its_marker_back);
     g_test_add_func("/block-style/backspace-leaves-a-list",
                     test_a_backspace_leaves_a_list);
+    g_test_add_func("/block-style/delete-leaves-a-list", test_a_delete_leaves_a_list);
     g_test_add_func("/block-style/leaving-a-list-keeps-the-words",
                     test_leaving_a_list_keeps_the_words);
     g_test_add_func("/block-style/names-and-ids",
