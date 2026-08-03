@@ -29,8 +29,19 @@
  * The block styles are a dropdown rather than more buttons, because they are
  * one answer and not a set: a line is a heading *instead of* a paragraph, where
  * it can be bold *as well as* italic. A row of toggles could only ever have one
- * lit, which is a dropdown drawn the long way round. It follows the text by the
- * same rule the buttons do, through format_bar_show_block(). */
+ * lit, which is a dropdown drawn the long way round.
+ *
+ * The two **list** styles are the exception, and get buttons of their own after
+ * the inline ones. A list is the block kind an author turns on and off rather
+ * than picks — a paragraph becomes a list and stops being one, where it does
+ * not stop being a heading but becomes something else instead — and on-and-off
+ * is what a toggle draws. Both controls show the same line: standing in a
+ * bulleted list lights the button *and* reads "Bulleted List" in the dropdown.
+ *
+ * Everything follows the text by the one rule, through
+ * format_bar_show_block(), which moves the dropdown and both buttons together.
+ * Taking a list back off is the verb's own doing, not this bar's — see
+ * editor_panel_set_block_style(). */
 typedef struct FormatBar FormatBar;
 
 FormatBar* format_bar_new(void);

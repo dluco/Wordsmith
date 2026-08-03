@@ -298,9 +298,9 @@ Anything else that comes to be hidden by the mode inherits both rules.
 
 ### The format bar
 
-A block style dropdown, then bold, italic and underline above the manuscript,
-on by default and remembered per project like the side panes. **GTK4 has no
-control for this**: `GtkToolbar`
+A block style dropdown, then bold, italic and underline, then the two list
+toggles, above the manuscript — on by default and remembered per project like
+the side panes. **GTK4 has no control for this**: `GtkToolbar`
 and `GtkToolButton` went out with GTK3, `GtkActionBar` is a contextual strip for
 the bottom of a window, and `GtkTextView` ships nothing of its own. A format bar
 in GTK4 is a `GtkBox` with the `.toolbar` style class and ordinary buttons in
@@ -331,13 +331,20 @@ character ahead at the start of a line. `tag_covers()` steps to the tag's next
 toggle rather than walking characters, because this runs on every cursor move
 and the selection may be the whole manuscript.
 
-The dropdown follows the text by the same rule, through
-`editor_panel_set_block_callback()` and `format_bar_show_block()`, off the same
-event: `notify_format()` fires both halves at once so the buttons and the
-dropdown cannot drift a keystroke apart. `EDITOR_BLOCK_OTHER` leaves it showing
-nothing rather than picking an answer it could not give — a selection spanning
-two kinds, a code block, no document open. `updating` covers it too, a
-`GtkDropDown` reporting every change to its selection the way a toggle does.
+The dropdown and the two list buttons follow the text by the same rule, through
+`editor_panel_set_block_callback()` and `format_bar_show_block()` — one call
+moving all three, off the same event: `notify_format()` fires both halves at
+once so nothing on the bar can drift a keystroke apart. `EDITOR_BLOCK_OTHER`
+leaves the dropdown showing nothing and both list buttons out, rather than
+picking an answer it could not give — a selection spanning two kinds, a code
+block, no document open. `updating` covers them too, a `GtkDropDown` reporting
+every change to its selection the way a toggle does.
+
+The list buttons name `win.block-style` with a target rather than an action of
+their own, so the button, the Format menu and Ctrl+Shift+8 stay three ways into
+one verb — **including the way back out**, which is the verb's own doing and not
+something the bar knows about. That is what keeps a press on a lit button and a
+press of its chord from meaning two different things.
 
 The bar itself has no accelerator, deliberately: the pane chords are worth
 knowing because of the rule behind them (the shifted form of the format key
@@ -398,9 +405,30 @@ line, not a set of flags** — a line is a heading *instead of* a paragraph wher
 it can be bold *as well as* italic — and that is why it is a dropdown in the
 format bar rather than six more toggles, which could only ever have one lit.
 
-Asking for the kind a line already has **does nothing**. A set of exclusive
-kinds shown in a dropdown cannot say "the same again" as a way back, so
-Paragraph is the way back and it is on the list.
+Five of the seven live in the dropdown. **The two list styles also get toggle
+buttons**, after the inline ones and behind a separator of their own. A list is
+the block kind an author turns on and off rather than picks — a paragraph
+becomes a list and stops being one, where it does not stop being a heading but
+becomes something else instead — and on-and-off is what a toggle draws. Both
+controls show the same line: standing in a bulleted list lights the button *and*
+reads "Bulleted List" in the dropdown.
+
+That split is what decides the **"off" rule, and it is not the same for all
+seven**. Asking for a list where one already covers the whole of what is
+addressed turns those lines back into paragraphs, exactly as pressing Bold over
+bold text does, because a lit button has to mean "click to take this off". The
+other five have no button, are reached from a dropdown where "the same row
+again" is not a gesture that could mean off, and stay a straight pick: asking
+for the kind a line already has does nothing, and Paragraph is the way back.
+`editor_block_style_for_press()` is the whole of that rule and the display-free
+seam for it — the same shape `editor_ask_for_style()` is, a press folded against
+what is in force. `block_style_over()` supplies the "in force", and only a kind
+covering *every* line addressed counts, so a selection half in a list becomes a
+list rather than half of one going away.
+
+An undo record is named for **what the author asked for, not what the lines
+became**: taking a list off reads "Undo Bulleted List", the way a style record is
+called "Bold" whichever direction the press went.
 
 The buffer carries more than the UI offers: headings 4 to 6 and code blocks both
 load, save and round-trip. A line wearing one reads back as

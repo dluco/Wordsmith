@@ -263,6 +263,48 @@ static void test_an_unoffered_kind_is_not_a_paragraph(void)
     fixture_clear(&fixture);
 }
 
+/* The two list styles have an off and the other five do not, because the lists
+ * are the ones with a button and a lit button means "click to take this off". */
+static void test_only_the_lists_have_an_off(void)
+{
+    /* A list asked for where that list already covers everything addressed is
+     * that list being taken off. */
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_BULLET_LIST,
+                                                 EDITOR_BLOCK_BULLET_LIST),
+                    ==, EDITOR_BLOCK_PARAGRAPH);
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_NUMBERED_LIST,
+                                                 EDITOR_BLOCK_NUMBERED_LIST),
+                    ==, EDITOR_BLOCK_PARAGRAPH);
+
+    /* The two lists are different answers, not one: asking for numbers over
+     * bullets swaps them rather than turning the list off. */
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_NUMBERED_LIST,
+                                                 EDITOR_BLOCK_BULLET_LIST),
+                    ==, EDITOR_BLOCK_NUMBERED_LIST);
+
+    /* Not covering the whole of what is addressed is not in force. A selection
+     * half in a list becomes a list, the way a half-bold one becomes bold. */
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_BULLET_LIST,
+                                                 EDITOR_BLOCK_OTHER),
+                    ==, EDITOR_BLOCK_BULLET_LIST);
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_BULLET_LIST,
+                                                 EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_BULLET_LIST);
+
+    /* The five reached from the dropdown are a straight pick either way:
+     * asking for the kind a line already has is not a way back to a paragraph,
+     * because picking the same row twice is not a gesture that means off. */
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_HEADING_1,
+                                                 EDITOR_BLOCK_HEADING_1),
+                    ==, EDITOR_BLOCK_HEADING_1);
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_QUOTE,
+                                                 EDITOR_BLOCK_QUOTE),
+                    ==, EDITOR_BLOCK_QUOTE);
+    g_assert_cmpint(editor_block_style_for_press(EDITOR_BLOCK_PARAGRAPH,
+                                                 EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_PARAGRAPH);
+}
+
 /* The names and the ids are one table read two ways, and the round trip is
  * what four places agreeing on a style rests on. */
 static void test_every_style_has_a_name_and_an_id(void)
@@ -327,6 +369,8 @@ int main(int argc, char* argv[])
                     test_a_numbered_run_is_renumbered_whole);
     g_test_add_func("/block-style/unoffered-kinds",
                     test_an_unoffered_kind_is_not_a_paragraph);
+    g_test_add_func("/block-style/only-lists-have-an-off",
+                    test_only_the_lists_have_an_off);
     g_test_add_func("/block-style/names-and-ids",
                     test_every_style_has_a_name_and_an_id);
     g_test_add_func("/block-style/ids-as-action-targets",

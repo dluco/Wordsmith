@@ -210,11 +210,18 @@ void editor_ask_for_style(uint32_t span_flag, uint32_t in_force,
 /** Make every line the selection touches — or the cursor's line, with nothing
  *  selected — a block of `style`.
  *
- *  Unlike an inline style this has nothing to wait for and no "off": the kinds
- *  are exclusive, so asking for one is always an answer, and asking for the one
- *  a line already has does nothing rather than putting it back to a paragraph.
- *  A set of exclusive kinds shown in a dropdown cannot say "the same again" as
- *  a way back; Paragraph is the way back, and it is on the list.
+ *  Unlike an inline style this has nothing to wait for: the kinds are
+ *  exclusive, so asking for one is always an answer.
+ *
+ *  **The two list styles have an "off" and the other five do not.** Asking for
+ *  a list where one is already in force across the whole of what is addressed
+ *  turns those lines back into paragraphs, exactly as pressing Bold over bold
+ *  text does — because a list is the one kind with a *button*, and a lit button
+ *  has to mean "click to take this off". A paragraph becomes a list and stops
+ *  being one; it does not stop being a heading, it becomes something else
+ *  instead. The other five are reached from a dropdown, where "the same again"
+ *  is not a gesture that could mean off, so asking for the kind a line already
+ *  has does nothing and Paragraph is the way back.
  *
  *  Lines already of that kind, and lines of a kind the UI does not offer, are
  *  passed over — so a pick across a code block styles the prose around it and
@@ -223,6 +230,16 @@ void editor_ask_for_style(uint32_t span_flag, uint32_t in_force,
  *
  *  Does nothing when no document is open. */
 void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style);
+
+/** What one press of `style` means where `in_force` is the kind covering every
+ *  line it addresses (EDITOR_BLOCK_OTHER when they are not all one kind).
+ *
+ *  The whole of the "off" rule above, split out from applying it so it can be
+ *  checked without a display — the same seam `editor_ask_for_style()` is for
+ *  the inline half, and the same shape: a press folded against what is in
+ *  force. */
+EditorBlockStyle editor_block_style_for_press(EditorBlockStyle style,
+                                              EditorBlockStyle in_force);
 
 /** The block the cursor stands in. Over a selection spanning two kinds, and
  *  over a kind the UI does not offer, EDITOR_BLOCK_OTHER — the same rule the

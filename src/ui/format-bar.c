@@ -23,9 +23,39 @@ static const ButtonSpec BUTTONS[] = {
 
 #define BUTTON_COUNT G_N_ELEMENTS(BUTTONS)
 
+/* The two list styles are block styles, and they still get buttons.
+ *
+ * A list is the one block kind an author turns *on and off* rather than picks:
+ * a paragraph becomes a list and stops being one, where it does not become a
+ * heading and stop being one — it becomes something else instead. That is a
+ * toggle, and a toggle is a button. The other five stay in the dropdown, where
+ * an exclusive set of kinds belongs, and both controls show the same line
+ * honestly: standing in a bulleted list lights this button *and* reads
+ * "Bulleted List" in the dropdown.
+ *
+ * They name win.block-style with a target rather than an action of their own,
+ * so the button, the Format menu and Ctrl+Shift+8 stay three ways into one
+ * verb — including the way back out, which is the verb's own doing and not
+ * something this bar knows about. */
+typedef struct ListButtonSpec {
+    const char*      icon;
+    const char*      tooltip;
+    EditorBlockStyle style;
+} ListButtonSpec;
+
+static const ListButtonSpec LIST_BUTTONS[] = {
+    { "view-list-bullet-symbolic", "Bulleted List (Ctrl+Shift+8)",
+      EDITOR_BLOCK_BULLET_LIST },
+    { "view-list-ordered-symbolic", "Numbered List (Ctrl+Shift+7)",
+      EDITOR_BLOCK_NUMBERED_LIST },
+};
+
+#define LIST_BUTTON_COUNT G_N_ELEMENTS(LIST_BUTTONS)
+
 struct FormatBar {
     GtkWidget* root; /* borrowed once parented into the window */
     GtkWidget* buttons[BUTTON_COUNT];
+    GtkWidget* list_buttons[LIST_BUTTON_COUNT];
     GtkWidget* blocks;   /* the block style dropdown */
 
     /* Set while the bar is following the text. A GtkToggleButton reports every
@@ -46,6 +76,23 @@ static void on_button_toggled(GtkToggleButton* button, gpointer user_data)
         if (bar->buttons[index] == GTK_WIDGET(button)) {
             gtk_widget_activate_action(GTK_WIDGET(button), BUTTONS[index].action,
                                        NULL);
+            return;
+        }
+    }
+}
+
+static void on_list_button_toggled(GtkToggleButton* button, gpointer user_data)
+{
+    FormatBar* bar = user_data;
+    if (bar->updating) {
+        return;
+    }
+
+    for (gsize index = 0; index < LIST_BUTTON_COUNT; index++) {
+        if (bar->list_buttons[index] == GTK_WIDGET(button)) {
+            gtk_widget_activate_action(GTK_WIDGET(button), "win.block-style", "s",
+                                       editor_block_style_id(
+                                           LIST_BUTTONS[index].style));
             return;
         }
     }
@@ -97,6 +144,23 @@ static GtkWidget* build_block_dropdown(FormatBar* bar)
     return dropdown;
 }
 
+/* Every toggle on the bar is built the same way; only what it raises differs. */
+static GtkWidget* add_toggle(FormatBar* bar, GtkWidget* box, const char* icon,
+                             const char* tooltip, GCallback on_toggled)
+{
+    GtkWidget* button = gtk_toggle_button_new();
+    gtk_button_set_icon_name(GTK_BUTTON(button), icon);
+    gtk_widget_set_tooltip_text(button, tooltip);
+    gtk_widget_add_css_class(button, "flat");
+    /* The manuscript keeps the keyboard: a click formats the selection and
+     * gives it straight back, rather than leaving the caret behind. */
+    gtk_widget_set_focus_on_click(button, FALSE);
+
+    g_signal_connect(button, "toggled", on_toggled, bar);
+    gtk_box_append(GTK_BOX(box), button);
+    return button;
+}
+
 FormatBar* format_bar_new(void)
 {
     FormatBar* bar = g_new0(FormatBar, 1);
@@ -112,20 +176,20 @@ FormatBar* format_bar_new(void)
     gtk_box_append(GTK_BOX(box), divider);
 
     for (gsize index = 0; index < BUTTON_COUNT; index++) {
-        const ButtonSpec* spec = &BUTTONS[index];
+        bar->buttons[index] = add_toggle(bar, box, BUTTONS[index].icon,
+                                         BUTTONS[index].tooltip,
+                                         G_CALLBACK(on_button_toggled));
+    }
 
-        GtkWidget* button = gtk_toggle_button_new();
-        gtk_button_set_icon_name(GTK_BUTTON(button), spec->icon);
-        gtk_widget_set_tooltip_text(button, spec->tooltip);
-        gtk_widget_add_css_class(button, "flat");
-        /* The manuscript keeps the keyboard: a click formats the selection and
-         * gives it straight back, rather than leaving the caret behind. */
-        gtk_widget_set_focus_on_click(button, FALSE);
+    /* The list buttons are their own group: they are block styles, and putting
+     * them straight after B, I and U would read as a fourth thing a character
+     * can wear. */
+    gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
-        g_signal_connect(button, "toggled", G_CALLBACK(on_button_toggled), bar);
-
-        gtk_box_append(GTK_BOX(box), button);
-        bar->buttons[index] = button;
+    for (gsize index = 0; index < LIST_BUTTON_COUNT; index++) {
+        bar->list_buttons[index] = add_toggle(bar, box, LIST_BUTTONS[index].icon,
+                                              LIST_BUTTONS[index].tooltip,
+                                              G_CALLBACK(on_list_button_toggled));
     }
 
     bar->root = box;
@@ -171,6 +235,13 @@ void format_bar_show_block(FormatBar* bar, EditorBlockStyle style)
 
     bar->updating = TRUE;
     gtk_drop_down_set_selected(GTK_DROP_DOWN(bar->blocks), position);
+    /* Lit while the cursor stands in that kind of list, out the moment it
+     * leaves — the same rule the inline buttons follow, and the same single
+     * report from the editor moving both. */
+    for (gsize index = 0; index < LIST_BUTTON_COUNT; index++) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bar->list_buttons[index]),
+                                     style == LIST_BUTTONS[index].style);
+    }
     bar->updating = FALSE;
 }
 

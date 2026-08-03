@@ -1131,6 +1131,33 @@ static void apply_block_lines(EditorPanel* editor, const UndoBlockLine* lines,
     editor->applying = was_applying;
 }
 
+/* The one kind covering [first_line, last_line], or EDITOR_BLOCK_OTHER when
+ * they are not all the same. Only an answer covering the whole of what is
+ * addressed counts, which is the rule the inline report follows over a
+ * selection — and it has the same two jobs, since it is both what the bar draws
+ * and what a press is folded against. */
+static EditorBlockStyle block_style_over(GtkTextBuffer* buffer,
+                                         const EditorBlockTags* tags,
+                                         int first_line, int last_line)
+{
+    const EditorBlockStyle style = editor_block_style_at(buffer, tags, first_line);
+    for (int line = first_line + 1; line <= last_line; line++) {
+        if (editor_block_style_at(buffer, tags, line) != style) {
+            return EDITOR_BLOCK_OTHER;
+        }
+    }
+    return style;
+}
+
+EditorBlockStyle editor_block_style_for_press(EditorBlockStyle style,
+                                              EditorBlockStyle in_force)
+{
+    if (block_style_is_list(style) && in_force == style) {
+        return EDITOR_BLOCK_PARAGRAPH;
+    }
+    return style;
+}
+
 EditorBlockStyle editor_panel_block_style_at_cursor(EditorPanel* editor)
 {
     if (editor == NULL || editor->path == NULL) {
@@ -1144,15 +1171,7 @@ EditorBlockStyle editor_panel_block_style_at_cursor(EditorPanel* editor)
     int last  = 0;
     block_lines_at_cursor(editor->buffer, &first, &last);
 
-    /* Only one answer covering the whole of it counts, which is the rule the
-     * inline report follows over a selection. */
-    const EditorBlockStyle style = editor_block_style_at(editor->buffer, &tags, first);
-    for (int line = first + 1; line <= last; line++) {
-        if (editor_block_style_at(editor->buffer, &tags, line) != style) {
-            return EDITOR_BLOCK_OTHER;
-        }
-    }
-    return style;
+    return block_style_over(editor->buffer, &tags, first, last);
 }
 
 void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
@@ -1178,6 +1197,11 @@ void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
     int last  = 0;
     block_lines_at_cursor(editor->buffer, &first, &last);
 
+    /* What the press actually means here — a list asked for where one already
+     * covers the whole of what is addressed is a list being taken off. */
+    const EditorBlockStyle wanted = editor_block_style_for_press(
+        style, block_style_over(editor->buffer, &tags, first, last));
+
     /* What each line was, gathered before the press destroys it. Only the lines
      * that actually change go in, so undoing a pick over a mixed selection puts
      * every line back to its own kind rather than to one of them, and a line
@@ -1187,10 +1211,10 @@ void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
     for (int line = first; line <= last; line++) {
         const EditorBlockStyle before = editor_block_style_at(editor->buffer, &tags,
                                                               line);
-        if (before == style || before == EDITOR_BLOCK_OTHER) {
+        if (before == wanted || before == EDITOR_BLOCK_OTHER) {
             continue;
         }
-        const UndoBlockLine entry = { line, before, style };
+        const UndoBlockLine entry = { line, before, wanted };
         g_array_append_val(changed, entry);
     }
 
@@ -1202,6 +1226,9 @@ void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
         return;
     }
 
+    /* Named for what the author asked for rather than what the lines became, so
+     * taking a list off reads "Undo Bulleted List" — the same way a style
+     * record is called "Bold" whichever direction the press went. */
     UndoRecord* captured =
         recording(editor)
             ? undo_record_new_block(editor_block_style_name(style),
