@@ -305,6 +305,50 @@ static void test_only_the_lists_have_an_off(void)
                     ==, EDITOR_BLOCK_PARAGRAPH);
 }
 
+/* A return carries a list on, and a return on an item with nothing in it lets
+ * the list go. Nothing else about Enter changed. */
+static void test_a_return_carries_a_list_on(void)
+{
+    /* In an item with words in it: another item below. */
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_BULLET_LIST, FALSE),
+                    ==, EDITOR_RETURN_CONTINUE_LIST);
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_NUMBERED_LIST, FALSE),
+                    ==, EDITOR_RETURN_CONTINUE_LIST);
+
+    /* In an item holding nothing but its marker: the list ends, and the newline
+     * has to be refused rather than followed by a correction. */
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_BULLET_LIST, TRUE),
+                    ==, EDITOR_RETURN_END_LIST);
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_NUMBERED_LIST, TRUE),
+                    ==, EDITOR_RETURN_END_LIST);
+
+    /* Every other kind opens a plain line, empty or not. A title is one line,
+     * and the thing after it is not another title. */
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_HEADING_1, FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_QUOTE, FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_PARAGRAPH, TRUE),
+                    ==, EDITOR_RETURN_ORDINARY);
+    g_assert_cmpint(editor_return_action("\n", 1, EDITOR_BLOCK_OTHER, FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+
+    /* Only a lone newline is a return being pressed. A paste carrying one is
+     * not, and must not turn the page it brought into a list. */
+    g_assert_cmpint(editor_return_action("\nsecond", 7, EDITOR_BLOCK_BULLET_LIST,
+                                         FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+    g_assert_cmpint(editor_return_action("first\n", 6, EDITOR_BLOCK_BULLET_LIST,
+                                         FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+
+    /* And ordinary typing in a list is ordinary typing. */
+    g_assert_cmpint(editor_return_action("a", 1, EDITOR_BLOCK_BULLET_LIST, FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+    g_assert_cmpint(editor_return_action(NULL, 1, EDITOR_BLOCK_BULLET_LIST, FALSE),
+                    ==, EDITOR_RETURN_ORDINARY);
+}
+
 /* The names and the ids are one table read two ways, and the round trip is
  * what four places agreeing on a style rests on. */
 static void test_every_style_has_a_name_and_an_id(void)
@@ -371,6 +415,8 @@ int main(int argc, char* argv[])
                     test_an_unoffered_kind_is_not_a_paragraph);
     g_test_add_func("/block-style/only-lists-have-an-off",
                     test_only_the_lists_have_an_off);
+    g_test_add_func("/block-style/return-carries-a-list-on",
+                    test_a_return_carries_a_list_on);
     g_test_add_func("/block-style/names-and-ids",
                     test_every_style_has_a_name_and_an_id);
     g_test_add_func("/block-style/ids-as-action-targets",

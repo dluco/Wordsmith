@@ -68,8 +68,12 @@ struct EditorPanel {
     /* Which block the text is landing in, read before it lands for the same
      * reason the inline styles are: at the end of a heading the tag stops
      * short, so GTK would hand back a plain character exactly where the author
-     * is carrying on writing a heading. */
-    EditorBlockStyle insert_block;
+     * is carrying on writing a heading.
+     *
+     * `return_action` is the other thing only readable from before: whether
+     * this insertion is a return that carries a list on, or ends one. */
+    EditorBlockStyle   insert_block;
+    EditorReturnAction return_action;
 
     /* Undo. The store is borrowed and outlives the open document, keyed by its
      * path; see undo-stack.h for why a history is per item rather than per
@@ -1149,6 +1153,17 @@ static EditorBlockStyle block_style_over(GtkTextBuffer* buffer,
     return style;
 }
 
+EditorReturnAction editor_return_action(const char* text, int length,
+                                        EditorBlockStyle line_style,
+                                        gboolean line_is_bare)
+{
+    if (length != 1 || text == NULL || text[0] != '\n'
+        || !block_style_is_list(line_style)) {
+        return EDITOR_RETURN_ORDINARY;
+    }
+    return line_is_bare ? EDITOR_RETURN_END_LIST : EDITOR_RETURN_CONTINUE_LIST;
+}
+
 EditorBlockStyle editor_block_style_for_press(EditorBlockStyle style,
                                               EditorBlockStyle in_force)
 {
@@ -1365,18 +1380,47 @@ static gboolean range_is_styled(EditorPanel* editor, int from, int to)
  * is going still reads as it did. GTK gives inserted text the tags that cover
  * the spot, which is not the same question — at the end of a bold word the tag
  * stops short, and that is exactly where an author carries on typing in bold. */
+/* Read the two facts about where the text is going that the return rule needs,
+ * and ask it. Both have to be read *before* the newline lands: afterwards the
+ * item is no longer the cursor's line, and no longer empty in the way that
+ * matters. */
+static EditorReturnAction return_action_at(EditorPanel* editor,
+                                           const GtkTextIter* location,
+                                           const char* text, int length)
+{
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+
+    const int   line = gtk_text_iter_get_line(location);
+    GtkTextIter start;
+    gtk_text_buffer_get_iter_at_line(editor->buffer, &start, line);
+
+    return editor_return_action(text, length,
+                                editor_block_style_at(editor->buffer, &tags, line),
+                                line_is_empty(editor, &start));
+}
+
 static void on_text_inserting(GtkTextBuffer* buffer, GtkTextIter* location,
                               char* text, int length, gpointer user_data)
 {
-    (void) buffer;
-    (void) text;
-    (void) length;
-
     EditorPanel* editor = user_data;
     /* Applying a record dresses its own text — put_text_back() clears the
      * inline tags and lays the record's runs down instead — and the markers a
      * block record regenerates are not the author's typing either. */
     if (editor->loading || editor->applying) {
+        return;
+    }
+
+    /* What a return here means, decided while the line it was pressed on is
+     * still the line the cursor is in. The after handler acts on a
+     * continuation; ending a list has to be dealt with now, because it is the
+     * one answer that refuses the newline — stopping the emission is what keeps
+     * it from ever reaching the buffer. The line becomes a paragraph through
+     * the ordinary verb, so it is one block record and one press to take back. */
+    editor->return_action = return_action_at(editor, location, text, length);
+    if (editor->return_action == EDITOR_RETURN_END_LIST) {
+        g_signal_stop_emission_by_name(buffer, "insert-text");
+        editor_panel_set_block_style(editor, EDITOR_BLOCK_PARAGRAPH);
         return;
     }
 
@@ -1451,12 +1495,51 @@ static void dress_block(EditorPanel* editor, int from, int to)
     }
 }
 
+/* Open another item below the one a return was pressed in, the before handler
+ * having already decided that is what it meant.
+ *
+ * The record says the new line was a **paragraph**, which is not quite what it
+ * was — it did not exist. It is the truthful thing to say about a line the
+ * other half of the compound is about to delete, and it is what makes undo
+ * strip the marker before the newline goes: without it the marker would be left
+ * behind as ordinary text in the manuscript.
+ *
+ * The style is applied whatever the new line already reads as. GTK gives the
+ * inserted newline the tags covering the spot, so the line below is already
+ * wearing the list tag and answers as an item — with no marker in front of it,
+ * which is exactly the state this is here to fix.
+ *
+ * Returns the record for the item, or NULL when there was no item to open. */
+static UndoRecord* continue_list(EditorPanel* editor, int to)
+{
+    if (editor->return_action != EDITOR_RETURN_CONTINUE_LIST
+        || !block_style_is_list(editor->insert_block)) {
+        return NULL;
+    }
+
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_offset(editor->buffer, &at, to);
+    const UndoBlockLine entry = { gtk_text_iter_get_line(&at),
+                                  EDITOR_BLOCK_PARAGRAPH, editor->insert_block };
+
+    UndoRecord* record =
+        recording(editor)
+            ? undo_record_new_block(editor_block_style_name(editor->insert_block),
+                                    &entry, 1)
+            : NULL;
+
+    apply_block_lines(editor, &entry, 1, FALSE);
+    return record;
+}
+
 /* After it lands: dress it. The answer is applied and its opposite removed, so
  * Ctrl+B in the middle of a bold word stops the bold rather than inheriting it
  * from either side. */
 static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
                              char* text, int length, gpointer user_data)
 {
+    /* What arrived was read on the way in; what is left to do here is decided
+     * from the offsets and from what the before handler worked out. */
     (void) text;
     (void) length;
 
@@ -1495,12 +1578,19 @@ static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
 
     /* After the styling, not before: the record carries what the text ended up
      * wearing, so redoing an insertion puts back bold text as bold. */
+    UndoRecord* parts[2] = { NULL, NULL };
     if (to > from) {
-        record_edit(editor,
-                    undo_record_capture_text(buffer, editor->inline_tags,
-                                             INLINE_TAG_COUNT, UNDO_TEXT_INSERT,
-                                             from, to));
+        parts[0] = undo_record_capture_text(buffer, editor->inline_tags,
+                                            INLINE_TAG_COUNT, UNDO_TEXT_INSERT,
+                                            from, to);
     }
+
+    /* And the item a return opens inside a list, which is part of the same
+     * keystroke: one press in, one press to take it back. The text record is
+     * captured first because that is the order the two have to be applied in. */
+    parts[1] = continue_list(editor, to);
+
+    record_edit(editor, undo_record_new_compound(parts, G_N_ELEMENTS(parts)));
 
     notify_format(editor);
 }
@@ -1554,6 +1644,45 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
 
 /* ── editing verbs ───────────────────────────────────────────────────────── */
 
+/* One record of any kind but a compound. Split out so the compound arm has
+ * something to call for each of its parts. */
+static void apply_single_record(EditorPanel* editor, const UndoRecord* record,
+                                gboolean reverse)
+{
+    if (record->kind != UNDO_BLOCK) {
+        undo_record_apply(record, editor->buffer, editor->inline_tags,
+                          INLINE_TAG_COUNT, reverse);
+        return;
+    }
+
+    apply_block_lines(editor, record->block.lines, record->block.line_count,
+                      reverse);
+
+    /* Land the cursor on the change, so a press whose effect is off screen is
+     * not one the author has to go looking for. */
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_line(editor->buffer, &at,
+                                     record->block.lines[0].line);
+    gtk_text_buffer_place_cursor(editor->buffer, &at);
+}
+
+/* Whether putting this record back changes a tag without moving a character,
+ * which is the case GtkTextBuffer does not call itself modified for. */
+static gboolean record_changes_tags(const UndoRecord* record)
+{
+    if (record->kind == UNDO_STYLE || record->kind == UNDO_BLOCK) {
+        return TRUE;
+    }
+    if (record->kind == UNDO_COMPOUND) {
+        for (size_t index = 0; index < record->compound.part_count; index++) {
+            if (record_changes_tags(record->compound.parts[index])) {
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
 void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
                                gboolean reverse)
 {
@@ -1562,22 +1691,22 @@ void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
     }
 
     editor->applying = TRUE;
-    undo_record_apply(record, editor->buffer, editor->inline_tags, INLINE_TAG_COUNT,
-                      reverse);
-    if (record->kind == UNDO_BLOCK) {
-        apply_block_lines(editor, record->block.lines, record->block.line_count,
-                          reverse);
-
-        /* Land the cursor on the change, so a press whose effect is off screen
-         * is not one the author has to go looking for. */
-        GtkTextIter at;
-        gtk_text_buffer_get_iter_at_line(editor->buffer, &at,
-                                         record->block.lines[0].line);
-        gtk_text_buffer_place_cursor(editor->buffer, &at);
+    if (record->kind == UNDO_COMPOUND) {
+        /* In order forwards and in reverse order backwards, which is the whole
+         * of what makes a compound different from its parts: taking back an
+         * Enter inside a list has to lift the item off before the newline goes,
+         * or the marker is left behind as ordinary text. */
+        const size_t count = record->compound.part_count;
+        for (size_t step = 0; step < count; step++) {
+            const size_t index = reverse ? count - 1 - step : step;
+            apply_single_record(editor, record->compound.parts[index], reverse);
+        }
+    } else {
+        apply_single_record(editor, record, reverse);
     }
     editor->applying = FALSE;
 
-    if (record->kind == UNDO_STYLE || record->kind == UNDO_BLOCK) {
+    if (record_changes_tags(record)) {
         note_style_change(editor);
     }
 

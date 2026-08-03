@@ -231,6 +231,33 @@ void editor_ask_for_style(uint32_t span_flag, uint32_t in_force,
  *  Does nothing when no document is open. */
 void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style);
 
+/* What a return means where it was pressed. Lists are the only block kind that
+ * carries across one: pressing Enter in a heading still opens a paragraph,
+ * because a title is one line and the thing after it is not another title. */
+typedef enum EditorReturnAction {
+    EDITOR_RETURN_ORDINARY,      /* let the newline through and change nothing */
+    EDITOR_RETURN_CONTINUE_LIST, /* and open another item on the line below */
+    EDITOR_RETURN_END_LIST,      /* refuse it; the empty item becomes a paragraph */
+} EditorReturnAction;
+
+/** What the insertion of `text` at a line that is `line_style` and holds
+ *  nothing but its marker (`line_is_bare`) should do.
+ *
+ *  Only a **lone newline** is a return being pressed. A paste that happens to
+ *  contain one is not, and turning every line of a dropped page into a list
+ *  item is not what it asks for — its first line takes the item it landed in
+ *  (see the insert handlers) and the rest stay paragraphs.
+ *
+ *  An empty item ending the list is how every editor lets go of one without
+ *  reaching for a menu, and it is why the two answers are separate: one of them
+ *  has to stop the newline reaching the buffer at all.
+ *
+ *  The display-free seam for the whole rule, the way
+ *  `editor_block_style_for_press()` is for the other. */
+EditorReturnAction editor_return_action(const char* text, int length,
+                                        EditorBlockStyle line_style,
+                                        gboolean line_is_bare);
+
 /** What one press of `style` means where `in_force` is the kind covering every
  *  line it addresses (EDITOR_BLOCK_OTHER when they are not all one kind).
  *

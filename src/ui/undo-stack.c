@@ -43,6 +43,12 @@ void undo_record_free(UndoRecord* record)
         g_free(record->block.lines);
         g_free(record->block.verb);
         break;
+    case UNDO_COMPOUND:
+        for (size_t index = 0; index < record->compound.part_count; index++) {
+            undo_record_free(record->compound.parts[index]);
+        }
+        g_free(record->compound.parts);
+        break;
     case UNDO_METADATA:
         g_free(record->metadata.target);
         g_free(record->metadata.key);
@@ -94,6 +100,13 @@ char* undo_record_verb(const UndoRecord* record)
          * heading is. */
         return g_strdup(record->block.verb != NULL ? record->block.verb
                                                    : "Formatting");
+    case UNDO_COMPOUND:
+        /* Named for the part that was the author's actual gesture, which is the
+         * one they made first — Enter inside a list is Typing, and the item it
+         * opens is what typing there means. */
+        return record->compound.part_count > 0
+                   ? undo_record_verb(record->compound.parts[0])
+                   : g_strdup("Formatting");
     case UNDO_METADATA:
         return capitalized(record->metadata.key);
     }
@@ -192,6 +205,42 @@ UndoRecord* undo_record_capture_style(GtkTextBuffer* buffer, GtkTextTag* tag,
     collect_runs(buffer, tag, tag_index, from, to, from, prior);
     record->style.prior_count = prior->len;
     record->style.prior = (UndoStyleRun*) g_array_free(prior, prior->len == 0);
+
+    return record;
+}
+
+UndoRecord* undo_record_new_compound(UndoRecord** parts, size_t part_count)
+{
+    if (parts == NULL) {
+        return NULL;
+    }
+
+    /* Dropping the NULLs here is what lets a caller hand over whatever it
+     * happened to make without deciding first whether it has one thing or two. */
+    UndoRecord** kept = g_new0(UndoRecord*, part_count > 0 ? part_count : 1);
+    size_t       count = 0;
+    for (size_t index = 0; index < part_count; index++) {
+        if (parts[index] != NULL) {
+            kept[count++] = parts[index];
+        }
+    }
+
+    if (count == 0) {
+        g_free(kept);
+        return NULL;
+    }
+    if (count == 1) {
+        /* One thing is not a sequence, and wrapping it would only cost every
+         * reader of the history a level to see through. */
+        UndoRecord* only = kept[0];
+        g_free(kept);
+        return only;
+    }
+
+    UndoRecord* record         = g_new0(UndoRecord, 1);
+    record->kind               = UNDO_COMPOUND;
+    record->compound.parts     = kept;
+    record->compound.part_count = count;
 
     return record;
 }
@@ -366,6 +415,12 @@ void undo_record_apply(const UndoRecord* record, GtkTextBuffer* buffer,
     case UNDO_BLOCK:
         /* Applied through editor_panel_apply_record(), which owns the buffer's
          * block tags and the list markers made out of them. */
+        return;
+
+    case UNDO_COMPOUND:
+        /* Also editor_panel_apply_record()'s: a compound may hold either kind,
+         * and walking it here too would split one sequence across two passes
+         * and put the parts in the wrong order. */
         return;
 
     case UNDO_METADATA:

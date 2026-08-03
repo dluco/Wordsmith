@@ -386,11 +386,10 @@ The after handler dresses the **block** as well, and for the same reason the
 inline half exists: at the end of a heading the heading tag stops short, so
 carrying on typing a title used to give plain characters that save read past.
 `dress_block()` applies the line's own kind over what landed — but only as far
-as the **first newline in it**, which is what keeps Enter doing what it did. The
-line a return opens is a paragraph, because the block ends where the text does;
-a paste of several paragraphs into a heading takes the heading on its first line
-and leaves the rest alone. Carrying a list or a heading across a return is
-continuation, and it is not here.
+as the **first newline in it**. The line a return opens gets nothing from this,
+because the block ends where the text does; a paste of several paragraphs into a
+heading takes the heading on its first line and leaves the rest alone. What a
+return carries across is decided separately, below.
 
 There is no `range_is_styled()` exception for blocks. A line is one block, so
 text pasted into the middle of a heading is part of that heading whatever it
@@ -429,6 +428,39 @@ list rather than half of one going away.
 An undo record is named for **what the author asked for, not what the lines
 became**: taking a list off reads "Undo Bulleted List", the way a style record is
 called "Bold" whichever direction the press went.
+
+### Enter inside a list
+
+**Lists are the only block kind a return carries across.** Enter in a list item
+opens another one; Enter in an item holding nothing but its marker ends the
+list, turning that item into a paragraph. Enter anywhere else is unchanged — a
+heading is one line, and the thing after it is not another heading.
+
+`editor_return_action()` is the display-free seam and the whole of the rule,
+decided in the **before** handler because both facts it needs stop being true
+once the newline lands: the item is no longer the cursor's line, and no longer
+empty in the way that matters.
+
+Only a **lone newline** counts. A paste that happens to contain one is not a
+return being pressed, and turning every line of a dropped page into an item is
+not what it asks for.
+
+Ending a list is the answer that has to **refuse the newline**, which is why the
+decision is made before rather than corrected after:
+`g_signal_stop_emission_by_name()` in a handler connected the ordinary way keeps
+it from ever reaching the buffer, `insert-text` being `G_SIGNAL_RUN_LAST` with
+the insertion in its class closure. The item then becomes a paragraph through
+the ordinary verb, so it is one block record.
+
+Continuing one is two edits — a newline and the item below it — and **that is
+what compound records are for**. The item's record says the new line was a
+*paragraph*, which is not quite what it was, because it did not exist: that is
+the truthful thing to say about a line the other half is about to delete, and it
+is what makes undo strip the marker before the newline goes rather than leaving
+`- ` behind as ordinary text. The style is applied whatever the new line already
+reads as, because GTK gives the inserted newline the tags covering the spot, so
+the line below already answers as an item — with no marker in front of it, which
+is the state this exists to fix.
 
 The buffer carries more than the UI offers: headings 4 to 6 and code blocks both
 load, save and round-trip. A line wearing one reads back as
@@ -580,8 +612,11 @@ The spelling items name actions in a `spelling` group the marker installs **on
 the view**, not window actions like the binder's context menu — those verbs move
 files and open dialogs, these three change one word in one buffer. A correction
 reaches the buffer as a plain delete and insert, so the editor's own handlers
-record it, mark the document modified and recheck the line — two undo records
-rather than one, which a compound record in `undo-stack.h` would fix.
+record it, mark the document modified and recheck the line — **two undo records
+rather than one**. `UNDO_COMPOUND` now exists and is what fixes this; the
+correction is simply not wired through it yet, and doing so is a matter of
+gathering the two records the handlers already make rather than any new
+machinery.
 
 `SpellChecker::accept()` is the seam the manuscript's own vocabulary will arrive
 through — a novel is full of names that are spelled right and are in no
@@ -630,6 +665,17 @@ are quiet data loss if dropped:
   is being asked for. That one function is the path a pick and an undo of a pick
   both take, so neither can grow a rule the other lacks.
 
+- **A compound record is several records that were one thing done.** One
+  keystroke has to cost one press to take back, and Enter inside a list is a text
+  edit *and* a block edit. Parts are applied **in order forwards and in reverse
+  order backwards**, which is the whole of what makes a compound different from
+  the records inside it — taking back that Enter has to lift the item off before
+  the newline goes, or the marker is left behind as text in the manuscript.
+  `undo_record_new_compound()` drops NULL parts and hands back a lone survivor
+  unwrapped, so a caller that may or may not have a second thing does not branch.
+  Compounds hold **buffer records only**: one holding `UNDO_METADATA` would have
+  to be split across `project-actions.c` and the editor mid-sequence.
+
 `UNDO_BLOCK` is **ignored by `undo_record_apply()`** and applied by
 `editor_panel_apply_record()` instead, the way `UNDO_METADATA` is applied by
 `project-actions.c`: the block tags and the markers made out of them are
@@ -637,7 +683,12 @@ are quiet data loss if dropped:
 sound because setting a block style never adds or removes a line. Its `verb` is
 carried on the record rather than looked up, because the table of style names
 belongs to the editor panel and the store has no business knowing what a heading
-is.
+is. `UNDO_COMPOUND` is ignored there for a third reason: it may hold either
+kind, so walking it in both places would split one sequence across two passes
+and get the order wrong. `editor_panel_apply_record()` is the one place that can
+apply every kind, so it is the one place that unpacks a compound. A compound is
+named for its **first** part, that being the gesture the author made — Enter
+inside a list reads "Undo Typing".
 
 Offsets are **character** offsets, the units `GtkTextIter` counts in. Anything
 using `strlen()` for a record's length works until the first accented character

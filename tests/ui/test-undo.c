@@ -1,3 +1,4 @@
+#include "ui/editor-panel.h"
 #include "ui/undo-stack.h"
 
 #include <gtk/gtk.h>
@@ -580,6 +581,59 @@ static void test_a_record_names_itself(void)
     g_assert_null(undo_record_verb(NULL));
 }
 
+/* One keystroke has to cost one press to take back, so the several records a
+ * keystroke can make are gathered into one. Enter inside a list is the case
+ * that forced it: a newline and the item it opens below. */
+static void test_a_compound_is_one_thing_done(void)
+{
+    UndoRecord* first  = text_record(UNDO_TEXT_INSERT, 0, "\n");
+    UndoBlockLine line = { 1, EDITOR_BLOCK_PARAGRAPH, EDITOR_BLOCK_BULLET_LIST };
+    UndoRecord*   second = undo_record_new_block("Bulleted List", &line, 1);
+
+    UndoRecord* parts[2] = { first, second };
+    UndoRecord* compound = undo_record_new_compound(parts, 2);
+
+    g_assert_nonnull(compound);
+    g_assert_cmpint(compound->kind, ==, UNDO_COMPOUND);
+    g_assert_cmpuint(compound->compound.part_count, ==, 2);
+    /* In the order they were handed over: that is what applying them backwards
+     * in reverse depends on. */
+    g_assert_true(compound->compound.parts[0] == first);
+    g_assert_true(compound->compound.parts[1] == second);
+
+    /* Named for the gesture, which is the part that came first. */
+    char* verb = undo_record_verb(compound);
+    g_assert_cmpstr(verb, ==, "Typing");
+    g_free(verb);
+
+    undo_record_free(compound);   /* and both parts with it */
+}
+
+/* A caller that may or may not have a second thing to add should not have to
+ * branch, so the NULLs are dropped here and one survivor is not wrapped. */
+static void test_a_compound_of_one_thing_is_that_thing(void)
+{
+    UndoRecord* only     = text_record(UNDO_TEXT_INSERT, 0, "x");
+    UndoRecord* parts[2] = { only, NULL };
+
+    UndoRecord* made = undo_record_new_compound(parts, 2);
+    g_assert_true(made == only);
+    g_assert_cmpint(made->kind, ==, UNDO_TEXT_INSERT);
+    undo_record_free(made);
+
+    /* A NULL first and a record second is the same answer, not a hole. */
+    UndoRecord* second     = text_record(UNDO_TEXT_INSERT, 0, "y");
+    UndoRecord* sparse[2]  = { NULL, second };
+    g_assert_true(undo_record_new_compound(sparse, 2) == second);
+    undo_record_free(second);
+
+    /* And nothing at all is nothing, which record_edit() already knows to
+     * throw away. */
+    UndoRecord* empty[2] = { NULL, NULL };
+    g_assert_null(undo_record_new_compound(empty, 2));
+    g_assert_null(undo_record_new_compound(NULL, 0));
+}
+
 /* A metadata record has to hold absent, a scalar and a sequence apart: emptying
  * a field removes it, and undo has to be able to put that difference back. */
 static void test_a_metadata_record_keeps_all_three_kinds_of_value(void)
@@ -657,6 +711,11 @@ int main(int argc, char* argv[])
     g_test_add_func("/undo/store/clearing-forgets-everything",
                     test_clearing_forgets_everything);
     g_test_add_func("/undo/store/history-is-bounded", test_a_history_is_bounded);
+
+    g_test_add_func("/undo/compound/is-one-thing-done",
+                    test_a_compound_is_one_thing_done);
+    g_test_add_func("/undo/compound/of-one-is-that-thing",
+                    test_a_compound_of_one_thing_is_that_thing);
 
     g_test_add_func("/undo/menu/record-names-itself", test_a_record_names_itself);
     g_test_add_func("/undo/menu/metadata-keeps-three-kinds",

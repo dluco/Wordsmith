@@ -92,6 +92,7 @@ typedef enum UndoKind {
     UNDO_TEXT_DELETE,   /* text left from [from, from + length) */
     UNDO_STYLE,         /* one inline tag applied or removed over a range */
     UNDO_BLOCK,         /* what some run of lines each are: heading, quote, list */
+    UNDO_COMPOUND,      /* several of the above, done as one thing */
     UNDO_METADATA,      /* one field set in frontmatter or a folder's sidecar */
 } UndoKind;
 
@@ -168,6 +169,28 @@ typedef struct UndoBlock {
     char*          verb;         /* owned */
 } UndoBlock;
 
+/* Several records that were one thing the author did.
+ *
+ * One keystroke has to cost one press to take back. Enter inside a list is the
+ * case that forced this: it puts a newline in *and* opens an item on the line
+ * below, which is a text edit and a block edit, and two Ctrl+Z presses at every
+ * item boundary is exactly the arithmetic UNDO_BLOCK exists to get right.
+ *
+ * Parts are applied **in order forwards and in reverse order backwards**, which
+ * is the whole of what makes a compound different from the records inside it.
+ * They are buffer records only: a compound holding UNDO_METADATA would have to
+ * be split across project-actions.c and the editor mid-sequence, and nothing
+ * needs that yet.
+ *
+ * The correction a spelling suggestion makes — a delete and an insert — is the
+ * other thing this fixes, and it is not wired up yet. */
+typedef struct UndoRecord UndoRecord;
+
+typedef struct UndoCompound {
+    UndoRecord** parts;        /* owned, and each part owned */
+    size_t       part_count;
+} UndoCompound;
+
 typedef struct UndoMetadata {
     /* The binder item the field belongs to, not the file the bytes land in: a
      * folder's fields live in a sidecar inside it, and keying by the item is
@@ -179,15 +202,17 @@ typedef struct UndoMetadata {
     UndoValue after;
 } UndoMetadata;
 
-typedef struct UndoRecord {
+/* Declared above UndoCompound, which holds these before this is filled in. */
+struct UndoRecord {
     UndoKind kind;
     union {
         UndoText     text;       /* UNDO_TEXT_INSERT and UNDO_TEXT_DELETE */
         UndoStyle    style;
         UndoBlock    block;
+        UndoCompound compound;
         UndoMetadata metadata;
     };
-} UndoRecord;
+};
 
 void undo_record_free(UndoRecord* record);
 
@@ -216,6 +241,14 @@ UndoRecord* undo_record_capture_style(GtkTextBuffer* buffer, GtkTextTag* tag,
                                       int tag_index, int from, int to,
                                       gboolean applied);
 
+/** One record out of several that were one thing the author did. Takes
+ *  ownership of every part, including the ones it skips.
+ *
+ *  NULL parts are dropped, so a caller that may or may not have something to
+ *  add does not have to branch; a single surviving part is handed back as
+ *  itself rather than wrapped, and nothing at all gives NULL. */
+UndoRecord* undo_record_new_compound(UndoRecord** parts, size_t part_count);
+
 /** A record of one block-style pick over `lines`. Copies both `verb` and the
  *  array; `lines` may hold only the entries that changed, and must be in
  *  increasing line order so the renumbering afterwards knows where to start. */
@@ -242,7 +275,12 @@ UndoRecord* undo_record_new_metadata(const char* target, gboolean is_folder,
  *  and goes through project-actions.c, which knows the ordering a metadata
  *  write needs against the editor. UNDO_BLOCK needs the buffer's *block* tags
  *  and the list markers made out of them, which is editor-panel.c's half of the
- *  buffer; it is applied by editor_panel_apply_record(). */
+ *  buffer; it is applied by editor_panel_apply_record().
+ *
+ *  UNDO_COMPOUND is ignored for a third reason: it may hold either, and walking
+ *  it here as well would put the parts of one sequence in two passes and get
+ *  their order wrong. Compounds are unpacked by editor_panel_apply_record(),
+ *  which is the one place that can apply every kind. */
 void undo_record_apply(const UndoRecord* record, GtkTextBuffer* buffer,
                        GtkTextTag* const* inline_tags, int tag_count,
                        gboolean reverse);
