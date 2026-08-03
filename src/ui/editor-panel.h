@@ -40,6 +40,39 @@ typedef void (*EditorModifiedFn)(int modified, void* user_data);
  * doing that reading. */
 typedef void (*EditorStylesFn)(uint32_t flags, void* user_data);
 
+/* Which block a line is. One line is one block, so this is a single answer per
+ * line rather than a set of flags — asking for a heading is not adding
+ * something to a paragraph, it is saying the line is a heading instead.
+ *
+ * These are the kinds the author can *reach*. The buffer carries more than
+ * this: headings 4 to 6 and code blocks both load, save and round-trip, and
+ * neither is offered. A line wearing one of those reads back as
+ * EDITOR_BLOCK_OTHER, which the dropdown shows as no answer at all rather than
+ * as a wrong one, and a pick passes over it rather than taking it.
+ *
+ * Left alone rather than taken over because of what undo would owe: a record
+ * says what each line was as an EditorBlockStyle, so a line that was a code
+ * block has no way to say so, and taking it over would be a change no press
+ * could put back. A kind that cannot be restored is worse to offer a way out
+ * of than to leave where it is. Making these reachable is the same work in
+ * both directions — a style to offer, and a style a record can name. */
+typedef enum EditorBlockStyle {
+    EDITOR_BLOCK_OTHER = -1,   /* a kind the buffer carries and the UI does not */
+    EDITOR_BLOCK_PARAGRAPH = 0,
+    EDITOR_BLOCK_HEADING_1,
+    EDITOR_BLOCK_HEADING_2,
+    EDITOR_BLOCK_HEADING_3,
+    EDITOR_BLOCK_QUOTE,
+    EDITOR_BLOCK_BULLET_LIST,
+    EDITOR_BLOCK_NUMBERED_LIST,
+    EDITOR_BLOCK_STYLE_COUNT,
+} EditorBlockStyle;
+
+/* Fired when the block the cursor stands in changes, so the format bar's
+ * dropdown follows the text the way its buttons do. EDITOR_BLOCK_OTHER when
+ * the line is a kind the UI does not offer, and when nothing is open. */
+typedef void (*EditorBlockFn)(EditorBlockStyle style, void* user_data);
+
 /* Fired when the open document's undo history changes, so whoever is showing it
  * — the Edit menu — never has to poll. */
 typedef void (*EditorHistoryFn)(void* user_data);
@@ -61,6 +94,13 @@ void editor_panel_set_modified_callback(EditorPanel* editor,
 void editor_panel_set_styles_callback(EditorPanel* editor,
                                       EditorStylesFn callback,
                                       void* user_data);
+
+/** Watch the block the cursor stands in. Fires alongside the styles callback,
+ *  off the same cursor moves, for the same reason: what a line is, is the
+ *  editor's own reading of its tags, and only one place should be reading. */
+void editor_panel_set_block_callback(EditorPanel* editor,
+                                     EditorBlockFn callback,
+                                     void* user_data);
 
 /** Record every edit into `store`, keyed by the open document's path. Borrowed,
  *  and outlives the document: that is what lets a history survive switching
@@ -164,6 +204,87 @@ uint32_t editor_typed_styles(uint32_t beside, uint32_t asked_mask,
  *  for it, and pressing it where everything is asks for the end of it. */
 void editor_ask_for_style(uint32_t span_flag, uint32_t in_force,
                           uint32_t* asked_mask, uint32_t* asked_flags);
+
+/* ── block styling ───────────────────────────────────────────────────────── */
+
+/** Make every line the selection touches — or the cursor's line, with nothing
+ *  selected — a block of `style`.
+ *
+ *  Unlike an inline style this has nothing to wait for and no "off": the kinds
+ *  are exclusive, so asking for one is always an answer, and asking for the one
+ *  a line already has does nothing rather than putting it back to a paragraph.
+ *  A set of exclusive kinds shown in a dropdown cannot say "the same again" as
+ *  a way back; Paragraph is the way back, and it is on the list.
+ *
+ *  Lines already of that kind, and lines of a kind the UI does not offer, are
+ *  passed over — so a pick across a code block styles the prose around it and
+ *  leaves it be, and a pick that changes nothing leaves no undo record and no
+ *  `*` in the title bar.
+ *
+ *  Does nothing when no document is open. */
+void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style);
+
+/** The block the cursor stands in. Over a selection spanning two kinds, and
+ *  over a kind the UI does not offer, EDITOR_BLOCK_OTHER — the same rule the
+ *  inline report follows, where a style is in force only if it covers the
+ *  whole of what is selected. */
+EditorBlockStyle editor_panel_block_style_at_cursor(EditorPanel* editor);
+
+/** What this style is called in a menu ("Heading 1"), and the name the action
+ *  takes as its parameter ("heading-1").
+ *
+ *  One table, because four places have to agree on it: the dropdown, the
+ *  Format menu, the accelerators, and the word Edit ▸ Undo uses. Both return
+ *  NULL for EDITOR_BLOCK_OTHER and anything out of range; neither is owned. */
+const char* editor_block_style_name(EditorBlockStyle style);
+const char* editor_block_style_id(EditorBlockStyle style);
+
+/** The style `id` names, or EDITOR_BLOCK_OTHER if it names none. */
+EditorBlockStyle editor_block_style_from_id(const char* id);
+
+/* The tags a buffer carries block styling in, gathered so the rules below can
+ * be driven without an EditorPanel — a GtkTextBuffer and its tags are plain
+ * objects, and this is the same seam editor_style_flags() is.
+ *
+ * `styles` is indexed by EditorBlockStyle, so `styles[EDITOR_BLOCK_PARAGRAPH]`
+ * is NULL: a paragraph is the absence of the others, not a tag of its own. */
+typedef struct EditorBlockTags {
+    GtkTextTag* styles[EDITOR_BLOCK_STYLE_COUNT];
+
+    /* The kinds the buffer carries and the UI does not offer — a code block,
+     * and headings 4 to 6. Read, so a line wearing one answers
+     * EDITOR_BLOCK_OTHER instead of passing for a paragraph, and cleared when
+     * something offered takes the line over. NULL-terminated. */
+    GtkTextTag* unoffered[8];
+
+    GtkTextTag* marker;   /* list markers: shown, but not part of the text */
+} EditorBlockTags;
+
+/** Which block `line` is, read from the tags at its first character.
+ *
+ *  A block tag covers its line's newline as well as its text, which is what
+ *  lets an *empty* line carry one: the newline is the only character there, so
+ *  without it "make this empty line a heading and start typing" would have
+ *  nowhere to put the answer. */
+EditorBlockStyle editor_block_style_at(GtkTextBuffer* buffer,
+                                       const EditorBlockTags* tags, int line);
+
+/** Make lines [first_line, last_line] blocks of `style`: clear whatever they
+ *  were, apply the new tag, and put a list marker in or take one out.
+ *
+ *  Never adds or removes a line, which is what lets an undo record address
+ *  lines by number. Renumbering is left to the caller, since a run of ordered
+ *  items may reach past what was touched. */
+void editor_block_apply(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                        int first_line, int last_line, EditorBlockStyle style);
+
+/** Rewrite the markers of every numbered run overlapping [first_line,
+ *  last_line], counting from 1 and reaching out to each run's real ends.
+ *
+ *  What the file says is regenerated on save either way; this is so the author
+ *  reads 1, 2, 3 rather than 1, 1, 1 while they work. */
+void editor_block_renumber(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                           int first_line, int last_line);
 
 /* Composition mode's side of the editor: the text draws as a column of fixed
  * width in the middle of the pane, however wide the pane has become.

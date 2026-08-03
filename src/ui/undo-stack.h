@@ -91,6 +91,7 @@ typedef enum UndoKind {
     UNDO_TEXT_INSERT,   /* text arrived at [from, from + length) */
     UNDO_TEXT_DELETE,   /* text left from [from, from + length) */
     UNDO_STYLE,         /* one inline tag applied or removed over a range */
+    UNDO_BLOCK,         /* what some run of lines each are: heading, quote, list */
     UNDO_METADATA,      /* one field set in frontmatter or a folder's sidecar */
 } UndoKind;
 
@@ -131,6 +132,42 @@ typedef struct UndoStyle {
     size_t        prior_count;
 } UndoStyle;
 
+/* One line's block kind before and after a pick. The numbers are
+ * EditorBlockStyle's, kept as plain ints for the reason `tag_index` is: what
+ * the store needs is something to hand back, not something to interpret.
+ *
+ * A line *number*, not an offset, because setting a block style never adds or
+ * removes a line — it changes tags and at most the list marker at the head of
+ * one — so the numbering the record was made against is the numbering it comes
+ * back to. */
+typedef struct UndoBlockLine {
+    int line;
+    int before;
+    int after;
+} UndoBlockLine;
+
+/* A pick of one block style, however many lines it landed on.
+ *
+ * One record rather than one per line, so that making a chapter's twelve
+ * paragraphs into a list costs one Ctrl+Z and not twelve — the count an author
+ * presses has to match the count of things they did. Only the lines that
+ * actually changed are in here, which is what lets undoing a pick over a mixed
+ * selection put every line back to its own kind rather than to one of them.
+ *
+ * The list markers a pick inserts and deletes belong to this record too: the
+ * editor suppresses them from the text history while it applies one, and
+ * regenerates them by re-applying the style in whichever direction is being
+ * asked for.
+ *
+ * `verb` is what Edit ▸ Undo calls it, carried rather than looked up because
+ * the table of block style names belongs to the editor panel, and the store
+ * has no business knowing what a heading is. */
+typedef struct UndoBlock {
+    UndoBlockLine* lines;        /* owned */
+    size_t         line_count;
+    char*          verb;         /* owned */
+} UndoBlock;
+
 typedef struct UndoMetadata {
     /* The binder item the field belongs to, not the file the bytes land in: a
      * folder's fields live in a sidecar inside it, and keying by the item is
@@ -147,6 +184,7 @@ typedef struct UndoRecord {
     union {
         UndoText     text;       /* UNDO_TEXT_INSERT and UNDO_TEXT_DELETE */
         UndoStyle    style;
+        UndoBlock    block;
         UndoMetadata metadata;
     };
 } UndoRecord;
@@ -178,6 +216,12 @@ UndoRecord* undo_record_capture_style(GtkTextBuffer* buffer, GtkTextTag* tag,
                                       int tag_index, int from, int to,
                                       gboolean applied);
 
+/** A record of one block-style pick over `lines`. Copies both `verb` and the
+ *  array; `lines` may hold only the entries that changed, and must be in
+ *  increasing line order so the renumbering afterwards knows where to start. */
+UndoRecord* undo_record_new_block(const char* verb, const UndoBlockLine* lines,
+                                  size_t line_count);
+
 /** A metadata record. `target` is the binder item, not the file. Takes ownership
  *  of nothing; every string is copied, and both item vectors are
  *  NULL-terminated. A NULL `scalar` with NULL `items` means the field was, or
@@ -191,9 +235,14 @@ UndoRecord* undo_record_new_metadata(const char* target, gboolean is_folder,
 
 /** Put `record` into or out of `buffer`. `reverse` is the undo direction: it
  *  removes an insertion, restores a deletion, and puts a tag's prior coverage
- *  back. UNDO_METADATA touches no buffer and is ignored here — it is applied
- *  through project-actions.c, which knows the ordering a metadata write needs
- *  against the editor. */
+ *  back.
+ *
+ *  Two kinds are ignored here, each because the tags or the bytes it needs are
+ *  somewhere this function cannot reach. UNDO_METADATA touches no buffer at all
+ *  and goes through project-actions.c, which knows the ordering a metadata
+ *  write needs against the editor. UNDO_BLOCK needs the buffer's *block* tags
+ *  and the list markers made out of them, which is editor-panel.c's half of the
+ *  buffer; it is applied by editor_panel_apply_record(). */
 void undo_record_apply(const UndoRecord* record, GtkTextBuffer* buffer,
                        GtkTextTag* const* inline_tags, int tag_count,
                        gboolean reverse);

@@ -22,10 +22,23 @@
     border-bottom: 1px solid alpha(currentColor, 0.12);
 }
 
-.format-bar button {
+/* Direct children only: the block style dropdown has a button of its own
+ * inside it, and a 24px minimum width is not what that one wants. */
+.format-bar > button {
     min-width: 24px;
     min-height: 24px;
     padding: 2px 6px;
+}
+
+/* The dropdown sits at the height of the buttons beside it rather than setting
+ * the height of the bar. */
+.format-bar dropdown > button {
+    min-height: 24px;
+    padding: 2px 8px;
+}
+
+.format-bar > separator {
+    margin: 2px 6px;
 }
 
 /* Inspector fields: a dimmed name over its value, so the pane scans as a list

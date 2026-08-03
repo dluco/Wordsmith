@@ -39,6 +39,10 @@ void undo_record_free(UndoRecord* record)
     case UNDO_STYLE:
         g_free(record->style.prior);
         break;
+    case UNDO_BLOCK:
+        g_free(record->block.lines);
+        g_free(record->block.verb);
+        break;
     case UNDO_METADATA:
         g_free(record->metadata.target);
         g_free(record->metadata.key);
@@ -84,6 +88,12 @@ char* undo_record_verb(const UndoRecord* record)
             return g_strdup(STYLE_VERBS[record->style.tag_index]);
         }
         return g_strdup("Formatting");
+    case UNDO_BLOCK:
+        /* Carried on the record rather than looked up: the block style names
+         * are the editor panel's, and this file has no business knowing what a
+         * heading is. */
+        return g_strdup(record->block.verb != NULL ? record->block.verb
+                                                   : "Formatting");
     case UNDO_METADATA:
         return capitalized(record->metadata.key);
     }
@@ -182,6 +192,22 @@ UndoRecord* undo_record_capture_style(GtkTextBuffer* buffer, GtkTextTag* tag,
     collect_runs(buffer, tag, tag_index, from, to, from, prior);
     record->style.prior_count = prior->len;
     record->style.prior = (UndoStyleRun*) g_array_free(prior, prior->len == 0);
+
+    return record;
+}
+
+UndoRecord* undo_record_new_block(const char* verb, const UndoBlockLine* lines,
+                                  size_t line_count)
+{
+    if (lines == NULL || line_count == 0) {
+        return NULL;
+    }
+
+    UndoRecord* record      = g_new0(UndoRecord, 1);
+    record->kind            = UNDO_BLOCK;
+    record->block.verb      = g_strdup(verb);
+    record->block.line_count = line_count;
+    record->block.lines     = g_memdup2(lines, line_count * sizeof(*lines));
 
     return record;
 }
@@ -336,6 +362,11 @@ void undo_record_apply(const UndoRecord* record, GtkTextBuffer* buffer,
         gtk_text_buffer_select_range(buffer, &start, &end);
         return;
     }
+
+    case UNDO_BLOCK:
+        /* Applied through editor_panel_apply_record(), which owns the buffer's
+         * block tags and the list markers made out of them. */
+        return;
 
     case UNDO_METADATA:
         /* Applied through project-actions.c, which owns the ordering a metadata

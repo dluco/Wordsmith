@@ -80,6 +80,14 @@ static void on_editor_styles(uint32_t flags, void* user_data)
     format_bar_show_styles(state->format_bar, flags);
 }
 
+/* And the same joining for the other half of the bar: what the line the cursor
+ * stands on *is*, as against what its characters are wearing. */
+static void on_editor_block(EditorBlockStyle style, void* user_data)
+{
+    WordsmithUiState* state = user_data;
+    format_bar_show_block(state->format_bar, style);
+}
+
 /* The editor records its own edits; what it reports is that it has, which is
  * all the Edit menu needs to name what a press would take back. */
 static void on_editor_history(void* user_data)
@@ -167,6 +175,7 @@ void main_window_present(GtkApplication* app, const char* initial_project)
     binder_panel_set_rename_callback(state->binder, on_binder_renamed, state);
     editor_panel_set_modified_callback(state->editor, on_editor_modified, state);
     editor_panel_set_styles_callback(state->editor, on_editor_styles, state);
+    editor_panel_set_block_callback(state->editor, on_editor_block, state);
     editor_panel_set_undo_store(state->editor, state->undo);
     editor_panel_set_history_callback(state->editor, on_editor_history, state);
     inspector_panel_set_commit_callback(state->inspector, on_inspector_commit, state);

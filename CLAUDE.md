@@ -239,6 +239,20 @@ so save skips them and regenerates numbering from the list tags. Save walks tags
 back through `wordsmith_markup_builder_*`, which keeps escaping and delimiter
 placement testable without a display.
 
+A block tag covers its line's **newline** as well as its text. That is what lets
+an *empty* line carry one — the newline is the only character there — which is
+what "make this line a heading and start typing" needs between the pick and the
+first keystroke. `line_kind()` asks the line's first character either way.
+
+Save **drops a block with nothing in it**, whatever kind it is (`line_is_empty`).
+For a paragraph that is the author's spacing, which the serializer puts back
+between blocks anyway. For the rest it is the other end of the rule above: a
+style asked for on a line nothing has been typed into yet would otherwise commit
+a bare `#` and a trailing space to the manuscript. Nothing is lost, because there
+were no words there to lose. A list item's **marker does not count as content** —
+it is display that save regenerates, so an item with no words is as empty as a
+blank line.
+
 Round-tripping is not byte-for-byte lossless (wrapped paragraphs fold into one
 line, markers normalise), but it reaches a fixed point after one pass.
 
@@ -284,8 +298,9 @@ Anything else that comes to be hidden by the mode inherits both rules.
 
 ### The format bar
 
-Bold, italic and underline above the manuscript, on by default and remembered
-per project like the side panes. **GTK4 has no control for this**: `GtkToolbar`
+A block style dropdown, then bold, italic and underline above the manuscript,
+on by default and remembered per project like the side panes. **GTK4 has no
+control for this**: `GtkToolbar`
 and `GtkToolButton` went out with GTK3, `GtkActionBar` is a contextual strip for
 the bottom of a window, and `GtkTextView` ships nothing of its own. A format bar
 in GTK4 is a `GtkBox` with the `.toolbar` style class and ordinary buttons in
@@ -316,9 +331,18 @@ character ahead at the start of a line. `tag_covers()` steps to the tag's next
 toggle rather than walking characters, because this runs on every cursor move
 and the selection may be the whole manuscript.
 
-The bar has no accelerator, deliberately: the pane chords are worth knowing
-because of the rule behind them (the shifted form of the format key sharing the
-letter), and there is no format key whose letter this could borrow.
+The dropdown follows the text by the same rule, through
+`editor_panel_set_block_callback()` and `format_bar_show_block()`, off the same
+event: `notify_format()` fires both halves at once so the buttons and the
+dropdown cannot drift a keystroke apart. `EDITOR_BLOCK_OTHER` leaves it showing
+nothing rather than picking an answer it could not give — a selection spanning
+two kinds, a code block, no document open. `updating` covers it too, a
+`GtkDropDown` reporting every change to its selection the way a toggle does.
+
+The bar itself has no accelerator, deliberately: the pane chords are worth
+knowing because of the rule behind them (the shifted form of the format key
+sharing the letter), and there is no format key whose letter this could borrow.
+The styles *in* it have chords of their own; see Block styling.
 
 ### Typing into a style
 
@@ -351,10 +375,69 @@ One exception keeps paste honest: text that arrives already wearing something
 themselves. A paste of formatted text keeps its own; a paste of bare text takes
 the styling of where it lands, which is what every other editor does.
 
-Nothing here touches block tags. Typing at the end of a heading still gives text
-without the heading tag, which save reads past — `line_kind()` asks the line's
-first character. That is unchanged, and it is the next thing in this corner
-worth fixing.
+The after handler dresses the **block** as well, and for the same reason the
+inline half exists: at the end of a heading the heading tag stops short, so
+carrying on typing a title used to give plain characters that save read past.
+`dress_block()` applies the line's own kind over what landed — but only as far
+as the **first newline in it**, which is what keeps Enter doing what it did. The
+line a return opens is a paragraph, because the block ends where the text does;
+a paste of several paragraphs into a heading takes the heading on its first line
+and leaves the rest alone. Carrying a list or a heading across a return is
+continuation, and it is not here.
+
+There is no `range_is_styled()` exception for blocks. A line is one block, so
+text pasted into the middle of a heading is part of that heading whatever it
+arrived wearing — the inline exception exists because two styles can share a
+character, and two blocks cannot share a line.
+
+### Block styling
+
+What a line *is*, as against what its characters are wearing: Paragraph,
+Heading 1 to 3, Block Quote, Bulleted List, Numbered List. **One answer per
+line, not a set of flags** — a line is a heading *instead of* a paragraph where
+it can be bold *as well as* italic — and that is why it is a dropdown in the
+format bar rather than six more toggles, which could only ever have one lit.
+
+Asking for the kind a line already has **does nothing**. A set of exclusive
+kinds shown in a dropdown cannot say "the same again" as a way back, so
+Paragraph is the way back and it is on the list.
+
+The buffer carries more than the UI offers: headings 4 to 6 and code blocks both
+load, save and round-trip. A line wearing one reads back as
+`EDITOR_BLOCK_OTHER`, which the dropdown shows as *no* answer rather than a
+wrong one, and **a pick passes over it rather than taking it**. That is undo's
+requirement rather than taste: a record says what each line was as an
+`EditorBlockStyle`, so a line that was a code block has no way to say so, and
+taking it over would be a change no press could put back. Making one of these
+reachable is the same work in both directions — a style to offer, and a style a
+record can name.
+
+`editor_block_style_at()`, `editor_block_apply()` and `editor_block_renumber()`
+are the display-free seams, driven through an `EditorBlockTags` — the same shape
+`editor_style_flags()`'s `inline_tags` is, and for the same reason. Applying
+never adds or removes a line; the most it moves is the list marker at the head
+of one, which is what lets an undo record address lines **by number**.
+
+Numbering is regenerated on save either way, so `editor_block_renumber()` exists
+for what the author reads while they work. It **reaches out to each run's real
+ends** rather than renumbering what it was handed, or joining two lists by
+naming the line in the gap would count 1, 2, 1, 1, 2.
+
+The seven are one action, `win.block-style`, taking the style's id as a string
+parameter — not seven actions, because the dropdown has to be able to *name* the
+one it raises. `editor_block_style_name()` / `editor_block_style_id()` is the
+single table, and four places read it: the dropdown, the Format menu, the
+accelerators, and the word Edit ▸ Undo uses.
+
+The chords are **Ctrl+Alt+0 to 3** for Paragraph and the three headings, and
+Ctrl+Shift+7/8/9 for Numbered, Bulleted and Quote. Ctrl+0 is the text size's, so
+the heading family moved to Ctrl+Alt *whole* rather than letting Paragraph alone
+take an exception — a set of chords is worth knowing because of the rule behind
+it, and "Ctrl+Alt and the heading's number, except the one meaning no heading"
+is not a rule. The other three have no number of their own to borrow and take
+Google Docs' assignment. Each carries the shifted symbol as an alternate for the
+reason the text size does: on a US or UK layout Ctrl+Shift+7 reaches the keymap
+as `ampersand`.
 
 ### Spelling
 
@@ -507,6 +590,26 @@ are quiet data loss if dropped:
   `editor_panel_toggle_style()` makes a mixed selection uniform, so bold over
   half-bold text is not reversible by pressing bold again; only the record still
   knows the mix.
+- **Block records carry every touched line's prior kind**, for that same reason
+  and one more: **one pick is one press to take back**. Making a chapter's twelve
+  paragraphs into a list costs one Ctrl+Z and not twelve, because the count an
+  author presses has to match the count of things they did. Only the lines that
+  actually changed are in the record, which is what lets undoing a pick over a
+  mixed selection put every line back to its own kind rather than to one of them.
+  The list markers a pick inserts and deletes belong to the block record too:
+  `apply_block_lines()` sets `applying` so they never arrive as text edits of
+  their own, and regenerates them by re-applying the style in whichever direction
+  is being asked for. That one function is the path a pick and an undo of a pick
+  both take, so neither can grow a rule the other lacks.
+
+`UNDO_BLOCK` is **ignored by `undo_record_apply()`** and applied by
+`editor_panel_apply_record()` instead, the way `UNDO_METADATA` is applied by
+`project-actions.c`: the block tags and the markers made out of them are
+`editor-panel.c`'s half of the buffer. It addresses lines **by number**, which is
+sound because setting a block style never adds or removes a line. Its `verb` is
+carried on the record rather than looked up, because the table of style names
+belongs to the editor panel and the store has no business knowing what a heading
+is.
 
 Offsets are **character** offsets, the units `GtkTextIter` counts in. Anything
 using `strlen()` for a record's length works until the first accented character
@@ -545,7 +648,7 @@ editor's stale `prologue` is written down once. A record is keyed by the **item*
 not the file it lands in.
 
 The Edit menu names what a press would take back ("Undo Typing", "Undo Bold",
-"Undo Synopsis") and greys out what has nothing behind it. `menu_bar_show_undo()`
+"Undo Heading 1", "Undo Synopsis") and greys out what has nothing behind it. `menu_bar_show_undo()`
 reports what is in force rather than deciding it, the way
 `format_bar_show_styles()` does; a `GMenuItem`'s label cannot be changed in
 place, so the item is replaced.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "editor-panel.h"
+
 #include <gtk/gtk.h>
 #include <stdint.h>
 
@@ -22,7 +24,13 @@
  * nothing selected that is a style waiting for the next thing typed, so the
  * button lights before the text exists — but it is still the editor's answer
  * being drawn, never the press. A press the editor does nothing with, with no
- * document open, therefore leaves the button where it was. */
+ * document open, therefore leaves the button where it was.
+ *
+ * The block styles are a dropdown rather than more buttons, because they are
+ * one answer and not a set: a line is a heading *instead of* a paragraph, where
+ * it can be bold *as well as* italic. A row of toggles could only ever have one
+ * lit, which is a dropdown drawn the long way round. It follows the text by the
+ * same rule the buttons do, through format_bar_show_block(). */
 typedef struct FormatBar FormatBar;
 
 FormatBar* format_bar_new(void);
@@ -35,6 +43,12 @@ GtkWidget* format_bar_widget(FormatBar* bar);
  *  WORDSMITH_MARKUP_SPAN_* bits, and put out the rest. This is the only thing
  *  that moves a button: see the note above. */
 void format_bar_show_styles(FormatBar* bar, uint32_t flags);
+
+/** Show `style` as the block the cursor stands in. EDITOR_BLOCK_OTHER — a
+ *  selection spanning two kinds, a code block, nothing open — leaves the
+ *  dropdown showing nothing rather than picking one of the answers it could
+ *  not give. */
+void format_bar_show_block(FormatBar* bar, EditorBlockStyle style);
 
 /** Put the bar on screen, or away. Hiding it leaves the editor the height it
  *  gives up. */

@@ -47,6 +47,9 @@ struct EditorPanel {
     EditorStylesFn styles_callback;
     void*          styles_user_data;
 
+    EditorBlockFn block_callback;
+    void*         block_user_data;
+
     /* A style the author has asked for with nothing selected, waiting for
      * something to be typed into it: `asked_mask` is which styles have an
      * answer here, `asked_flags` is the answer. Two words rather than one
@@ -61,6 +64,12 @@ struct EditorPanel {
     gboolean inserting;
     int      insert_from;      /* offset the text landed at */
     uint32_t insert_styles;    /* what it should come out wearing */
+
+    /* Which block the text is landing in, read before it lands for the same
+     * reason the inline styles are: at the end of a heading the tag stops
+     * short, so GTK would hand back a plain character exactly where the author
+     * is carrying on writing a heading. */
+    EditorBlockStyle insert_block;
 
     /* Undo. The store is borrowed and outlives the open document, keyed by its
      * path; see undo-stack.h for why a history is per item rather than per
@@ -81,8 +90,13 @@ struct EditorPanel {
 
 /* Defined with the rest of the styling, but needed by everything that leaves
  * the cursor somewhere new. */
-static void notify_styles(EditorPanel* editor);
+static void notify_format(EditorPanel* editor);
 static void forget_asked_styles(EditorPanel* editor);
+
+/* Defined with the recording, but needed by the block styling above it: a pick
+ * is captured before it lands, the same as a press of Bold. */
+static gboolean recording(EditorPanel* editor);
+static void     record_edit(EditorPanel* editor, UndoRecord* record);
 
 /* Record what the open document's buffer looks like as it is put away, so that
  * a history coming back can be checked against the text it claims to describe.
@@ -349,7 +363,7 @@ int editor_panel_load(EditorPanel* editor, const char* path, char** error)
     }
 
     forget_asked_styles(editor);
-    notify_styles(editor);
+    notify_format(editor);
     return 1;
 }
 
@@ -482,6 +496,26 @@ static void add_spans_for_range(EditorPanel* editor,
     g_string_free(pending, TRUE);
 }
 
+/* Whether the line beginning at `line_start` holds nothing but its own
+ * scaffolding: no characters at all, or none that are not a list marker. */
+static gboolean line_is_empty(EditorPanel* editor, const GtkTextIter* line_start)
+{
+    GtkTextIter cursor = *line_start;
+    if (gtk_text_iter_ends_line(&cursor)) {
+        return TRUE;
+    }
+
+    if (gtk_text_iter_has_tag(&cursor, editor->marker_tag)) {
+        GtkTextIter line_end = cursor;
+        gtk_text_iter_forward_to_line_end(&line_end);
+        if (!gtk_text_iter_forward_to_tag_toggle(&cursor, editor->marker_tag)
+            || gtk_text_iter_compare(&cursor, &line_end) >= 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 /* Gather the run of code-block lines starting at `line`, emit it as one block,
  * and return the first line after it. */
 static int emit_code_block(EditorPanel* editor, WordsmithMarkupBuilder* builder,
@@ -551,14 +585,25 @@ int editor_panel_save(EditorPanel* editor, char** error)
             continue;
         }
 
-        /* Blank paragraph lines are the author's spacing, not content. The
-         * serializer puts a blank line between blocks already. */
         char* raw = gtk_text_buffer_get_text(editor->buffer, &start, &end, FALSE);
-        const gboolean blank = raw == NULL || raw[0] == '\0';
         const gboolean is_rule = raw != NULL && strcmp(raw, "---") == 0;
         g_free(raw);
 
-        if (blank && kind.kind == WORDSMITH_MARKUP_PARAGRAPH) {
+        /* A block with nothing in it is not content, whatever kind it is.
+         *
+         * For a paragraph that is the author's spacing, and the serializer puts
+         * a blank line between blocks already. For the rest it is a style asked
+         * for on a line nothing has been typed into yet — picking Heading 1 on
+         * an empty line and saving before typing would otherwise commit a bare
+         * `#` and a trailing space to the manuscript. Nothing is lost: there
+         * were no words there to lose.
+         *
+         * A list item's marker does not count as content. It is display rather
+         * than text — save skips it and regenerates it — so an item with no
+         * words is as empty as a blank line is. */
+        const gboolean blank = line_is_empty(editor, &start);
+
+        if (blank) {
             previous_was_ordered = FALSE;
             line++;
             continue;
@@ -721,13 +766,19 @@ uint32_t editor_panel_styles_at_cursor(EditorPanel* editor)
         editor->asked_mask, editor->asked_flags);
 }
 
-static void notify_styles(EditorPanel* editor)
+/* Both halves of what the format bar shows, off the one event. The bar's
+ * buttons and its dropdown are answering about the same place, so they are
+ * told about it at the same time and cannot drift a keystroke apart. */
+static void notify_format(EditorPanel* editor)
 {
-    if (editor->styles_callback == NULL) {
-        return;
+    if (editor->styles_callback != NULL) {
+        editor->styles_callback(editor_panel_styles_at_cursor(editor),
+                                editor->styles_user_data);
     }
-    editor->styles_callback(editor_panel_styles_at_cursor(editor),
-                            editor->styles_user_data);
+    if (editor->block_callback != NULL) {
+        editor->block_callback(editor_panel_block_style_at_cursor(editor),
+                               editor->block_user_data);
+    }
 }
 
 /* A style changes tags without moving a character, and GtkTextBuffer only calls
@@ -738,6 +789,433 @@ static void notify_styles(EditorPanel* editor)
 static void note_style_change(EditorPanel* editor)
 {
     gtk_text_buffer_set_modified(editor->buffer, TRUE);
+}
+
+/* ── block styling ───────────────────────────────────────────────────────── */
+
+/* Name and identifier in EditorBlockStyle order. One table, because the
+ * dropdown, the Format menu, the accelerators and Edit ▸ Undo's wording all
+ * have to agree, and four copies of a list are four chances to disagree. */
+static const struct BlockStyleNames {
+    const char* name;
+    const char* id;
+} BLOCK_STYLES[EDITOR_BLOCK_STYLE_COUNT] = {
+    [EDITOR_BLOCK_PARAGRAPH]      = { "Paragraph",     "paragraph"      },
+    [EDITOR_BLOCK_HEADING_1]      = { "Heading 1",     "heading-1"      },
+    [EDITOR_BLOCK_HEADING_2]      = { "Heading 2",     "heading-2"      },
+    [EDITOR_BLOCK_HEADING_3]      = { "Heading 3",     "heading-3"      },
+    [EDITOR_BLOCK_QUOTE]          = { "Block Quote",   "quote"          },
+    [EDITOR_BLOCK_BULLET_LIST]    = { "Bulleted List", "bulleted-list"  },
+    [EDITOR_BLOCK_NUMBERED_LIST]  = { "Numbered List", "numbered-list"  },
+};
+
+static gboolean block_style_offered(EditorBlockStyle style)
+{
+    return style >= 0 && style < EDITOR_BLOCK_STYLE_COUNT;
+}
+
+const char* editor_block_style_name(EditorBlockStyle style)
+{
+    return block_style_offered(style) ? BLOCK_STYLES[style].name : NULL;
+}
+
+const char* editor_block_style_id(EditorBlockStyle style)
+{
+    return block_style_offered(style) ? BLOCK_STYLES[style].id : NULL;
+}
+
+EditorBlockStyle editor_block_style_from_id(const char* id)
+{
+    if (id == NULL) {
+        return EDITOR_BLOCK_OTHER;
+    }
+    for (int index = 0; index < EDITOR_BLOCK_STYLE_COUNT; index++) {
+        if (strcmp(id, BLOCK_STYLES[index].id) == 0) {
+            return (EditorBlockStyle) index;
+        }
+    }
+    return EDITOR_BLOCK_OTHER;
+}
+
+static gboolean block_style_is_list(EditorBlockStyle style)
+{
+    return style == EDITOR_BLOCK_BULLET_LIST || style == EDITOR_BLOCK_NUMBERED_LIST;
+}
+
+/* The panel's own tags, gathered into the shape the rules below take. Built
+ * per call rather than kept: it is a handful of pointer copies, and one place
+ * deciding which tag answers for which style is worth more than the saving. */
+static void block_tags(EditorPanel* editor, EditorBlockTags* out)
+{
+    memset(out, 0, sizeof(*out));
+
+    out->styles[EDITOR_BLOCK_HEADING_1]     = editor->heading_tags[0];
+    out->styles[EDITOR_BLOCK_HEADING_2]     = editor->heading_tags[1];
+    out->styles[EDITOR_BLOCK_HEADING_3]     = editor->heading_tags[2];
+    out->styles[EDITOR_BLOCK_QUOTE]         = editor->quote_tag;
+    out->styles[EDITOR_BLOCK_BULLET_LIST]   = editor->bullet_tag;
+    out->styles[EDITOR_BLOCK_NUMBERED_LIST] = editor->ordered_tag;
+
+    int next = 0;
+    out->unoffered[next++] = editor->code_block_tag;
+    for (int level = 3; level < MAX_HEADING_LEVEL; level++) {
+        out->unoffered[next++] = editor->heading_tags[level];
+    }
+
+    out->marker = editor->marker_tag;
+}
+
+/* A line and its newline. The newline is in the range deliberately: it is the
+ * only character an empty line has, so a block tag that stopped short of it
+ * would have nowhere to live on the line the author has just asked to make a
+ * heading and is about to type into. */
+static void line_bounds(GtkTextBuffer* buffer, int line, GtkTextIter* start,
+                        GtkTextIter* end)
+{
+    gtk_text_buffer_get_iter_at_line(buffer, start, line);
+    *end = *start;
+    if (!gtk_text_iter_forward_line(end)) {
+        gtk_text_buffer_get_end_iter(buffer, end);
+    }
+}
+
+/* The marker at the head of `line`, as [start, end). Both land on the line's
+ * first character when there is none. */
+static void marker_bounds(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                          int line, GtkTextIter* start, GtkTextIter* end)
+{
+    gtk_text_buffer_get_iter_at_line(buffer, start, line);
+    *end = *start;
+
+    if (tags->marker == NULL || !gtk_text_iter_has_tag(start, tags->marker)) {
+        return;
+    }
+    if (!gtk_text_iter_forward_to_tag_toggle(end, tags->marker)) {
+        *end = *start;
+        return;
+    }
+
+    /* A marker cannot reach past its own line, however the tag runs. */
+    GtkTextIter line_end = *start;
+    if (!gtk_text_iter_ends_line(&line_end)) {
+        gtk_text_iter_forward_to_line_end(&line_end);
+    }
+    if (gtk_text_iter_compare(end, &line_end) > 0) {
+        *end = line_end;
+    }
+}
+
+EditorBlockStyle editor_block_style_at(GtkTextBuffer* buffer,
+                                       const EditorBlockTags* tags, int line)
+{
+    if (buffer == NULL || tags == NULL || line < 0
+        || line >= gtk_text_buffer_get_line_count(buffer)) {
+        return EDITOR_BLOCK_OTHER;
+    }
+
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_line(buffer, &at, line);
+
+    for (int index = 0; index < (int) G_N_ELEMENTS(tags->unoffered); index++) {
+        if (tags->unoffered[index] == NULL) {
+            break;
+        }
+        if (gtk_text_iter_has_tag(&at, tags->unoffered[index])) {
+            return EDITOR_BLOCK_OTHER;
+        }
+    }
+
+    /* Paragraph is the absence of the rest, so it is the answer nothing else
+     * claimed rather than a tag to look for. */
+    for (int index = EDITOR_BLOCK_PARAGRAPH + 1; index < EDITOR_BLOCK_STYLE_COUNT;
+         index++) {
+        if (tags->styles[index] != NULL
+            && gtk_text_iter_has_tag(&at, tags->styles[index])) {
+            return (EditorBlockStyle) index;
+        }
+    }
+    return EDITOR_BLOCK_PARAGRAPH;
+}
+
+/* Put `text` at the head of `line` as a marker. */
+static void insert_marker(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                          int line, const char* text)
+{
+    if (tags->marker == NULL) {
+        return;
+    }
+    GtkTextIter at;
+    gtk_text_buffer_get_iter_at_line(buffer, &at, line);
+    gtk_text_buffer_insert_with_tags(buffer, &at, text, -1, tags->marker, NULL);
+}
+
+static void remove_marker(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                          int line)
+{
+    GtkTextIter start;
+    GtkTextIter end;
+    marker_bounds(buffer, tags, line, &start, &end);
+    if (gtk_text_iter_compare(&start, &end) < 0) {
+        gtk_text_buffer_delete(buffer, &start, &end);
+    }
+}
+
+void editor_block_apply(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                        int first_line, int last_line, EditorBlockStyle style)
+{
+    if (buffer == NULL || tags == NULL || !block_style_offered(style)) {
+        return;
+    }
+
+    const int line_count = gtk_text_buffer_get_line_count(buffer);
+    if (first_line < 0) {
+        first_line = 0;
+    }
+    if (last_line >= line_count) {
+        last_line = line_count - 1;
+    }
+
+    for (int line = first_line; line <= last_line; line++) {
+        remove_marker(buffer, tags, line);
+
+        GtkTextIter start;
+        GtkTextIter end;
+        line_bounds(buffer, line, &start, &end);
+        for (int index = 0; index < EDITOR_BLOCK_STYLE_COUNT; index++) {
+            if (tags->styles[index] != NULL) {
+                gtk_text_buffer_remove_tag(buffer, tags->styles[index], &start, &end);
+            }
+        }
+        for (int index = 0; index < (int) G_N_ELEMENTS(tags->unoffered); index++) {
+            if (tags->unoffered[index] == NULL) {
+                break;
+            }
+            gtk_text_buffer_remove_tag(buffer, tags->unoffered[index], &start, &end);
+        }
+
+        if (block_style_is_list(style)) {
+            insert_marker(buffer, tags, line,
+                          style == EDITOR_BLOCK_NUMBERED_LIST ? "1. " : "- ");
+        }
+
+        /* Re-read: a marker just moved the end of the line, and the tag has to
+         * cover it the way a loaded list item's does. */
+        line_bounds(buffer, line, &start, &end);
+        if (tags->styles[style] != NULL) {
+            gtk_text_buffer_apply_tag(buffer, tags->styles[style], &start, &end);
+        }
+    }
+}
+
+void editor_block_renumber(GtkTextBuffer* buffer, const EditorBlockTags* tags,
+                           int first_line, int last_line)
+{
+    if (buffer == NULL || tags == NULL
+        || tags->styles[EDITOR_BLOCK_NUMBERED_LIST] == NULL
+        || tags->marker == NULL) {
+        return;
+    }
+
+    const int line_count = gtk_text_buffer_get_line_count(buffer);
+    if (first_line < 0) {
+        first_line = 0;
+    }
+    if (last_line >= line_count) {
+        last_line = line_count - 1;
+    }
+    if (first_line > last_line) {
+        return;
+    }
+
+    /* A run clipped by the range is still one run: reach out to both its ends,
+     * or inserting an item in the middle of ten would number from there. */
+    while (first_line > 0
+           && editor_block_style_at(buffer, tags, first_line - 1)
+                  == EDITOR_BLOCK_NUMBERED_LIST) {
+        first_line--;
+    }
+    while (last_line + 1 < line_count
+           && editor_block_style_at(buffer, tags, last_line + 1)
+                  == EDITOR_BLOCK_NUMBERED_LIST) {
+        last_line++;
+    }
+
+    int number = 1;
+    for (int line = first_line; line <= last_line; line++) {
+        if (editor_block_style_at(buffer, tags, line) != EDITOR_BLOCK_NUMBERED_LIST) {
+            number = 1;
+            continue;
+        }
+
+        char wanted[24];
+        g_snprintf(wanted, sizeof(wanted), "%d. ", number);
+        number++;
+
+        GtkTextIter start;
+        GtkTextIter end;
+        marker_bounds(buffer, tags, line, &start, &end);
+        char* current = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        const gboolean same = current != NULL && strcmp(current, wanted) == 0;
+        g_free(current);
+        if (same) {
+            continue;
+        }
+
+        if (gtk_text_iter_compare(&start, &end) < 0) {
+            gtk_text_buffer_delete(buffer, &start, &end);
+        }
+        insert_marker(buffer, tags, line, wanted);
+
+        line_bounds(buffer, line, &start, &end);
+        gtk_text_buffer_apply_tag(buffer, tags->styles[EDITOR_BLOCK_NUMBERED_LIST],
+                                  &start, &end);
+    }
+}
+
+/* The lines a press addresses: every one the selection touches, or the
+ * cursor's. A selection ending exactly at the start of a line has not reached
+ * into it — dragging down to the next paragraph should not take it too. */
+static void block_lines_at_cursor(GtkTextBuffer* buffer, int* first, int* last)
+{
+    GtkTextIter start;
+    GtkTextIter end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) {
+        gtk_text_buffer_get_iter_at_mark(buffer, &start,
+                                         gtk_text_buffer_get_insert(buffer));
+        end = start;
+    }
+
+    *first = gtk_text_iter_get_line(&start);
+    *last  = gtk_text_iter_get_line(&end);
+    if (*last > *first && gtk_text_iter_starts_line(&end)) {
+        (*last)--;
+    }
+}
+
+/* Set every line in `lines` to the kind it is meant to end up as, `reverse`
+ * choosing which end of the record that is. The one path a pick and an undo of
+ * a pick both take, so neither can grow a rule the other lacks.
+ *
+ * The markers this puts in and takes out belong to the block record, not to the
+ * text history: one pick is one press to take back, so `applying` keeps the
+ * insertions from arriving as edits of their own. */
+static void apply_block_lines(EditorPanel* editor, const UndoBlockLine* lines,
+                              size_t line_count, gboolean reverse)
+{
+    if (line_count == 0) {
+        return;
+    }
+
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+
+    const gboolean was_applying = editor->applying;
+    editor->applying = TRUE;
+
+    int first = lines[0].line;
+    int last  = lines[0].line;
+    for (size_t index = 0; index < line_count; index++) {
+        const UndoBlockLine* entry = &lines[index];
+        editor_block_apply(editor->buffer, &tags, entry->line, entry->line,
+                           (EditorBlockStyle) (reverse ? entry->before
+                                                       : entry->after));
+        first = MIN(first, entry->line);
+        last  = MAX(last, entry->line);
+    }
+
+    /* One pass at the end rather than one per line: a numbered run reaches past
+     * whatever was touched, and renumbering it once is both cheaper and the
+     * only way the count comes out right. */
+    editor_block_renumber(editor->buffer, &tags, first - 1, last + 1);
+
+    editor->applying = was_applying;
+}
+
+EditorBlockStyle editor_panel_block_style_at_cursor(EditorPanel* editor)
+{
+    if (editor == NULL || editor->path == NULL) {
+        return EDITOR_BLOCK_OTHER;
+    }
+
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+
+    int first = 0;
+    int last  = 0;
+    block_lines_at_cursor(editor->buffer, &first, &last);
+
+    /* Only one answer covering the whole of it counts, which is the rule the
+     * inline report follows over a selection. */
+    const EditorBlockStyle style = editor_block_style_at(editor->buffer, &tags, first);
+    for (int line = first + 1; line <= last; line++) {
+        if (editor_block_style_at(editor->buffer, &tags, line) != style) {
+            return EDITOR_BLOCK_OTHER;
+        }
+    }
+    return style;
+}
+
+void editor_panel_set_block_style(EditorPanel* editor, EditorBlockStyle style)
+{
+    if (editor == NULL || !block_style_offered(style)) {
+        return;
+    }
+
+    /* A pick the editor does nothing with still gets an answer, because the
+     * dropdown has already moved itself to show it. The buttons can be left
+     * alone in this case — a toggle that was not acted on is still showing the
+     * last true thing it was told — but a dropdown would sit there naming a
+     * style for a document that is not open. Reporting puts it back. */
+    if (editor->path == NULL) {
+        notify_format(editor);
+        return;
+    }
+
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+
+    int first = 0;
+    int last  = 0;
+    block_lines_at_cursor(editor->buffer, &first, &last);
+
+    /* What each line was, gathered before the press destroys it. Only the lines
+     * that actually change go in, so undoing a pick over a mixed selection puts
+     * every line back to its own kind rather than to one of them, and a line
+     * the UI has no name for is passed over rather than taken somewhere no
+     * record could bring it back from. */
+    GArray* changed = g_array_new(FALSE, FALSE, sizeof(UndoBlockLine));
+    for (int line = first; line <= last; line++) {
+        const EditorBlockStyle before = editor_block_style_at(editor->buffer, &tags,
+                                                              line);
+        if (before == style || before == EDITOR_BLOCK_OTHER) {
+            continue;
+        }
+        const UndoBlockLine entry = { line, before, style };
+        g_array_append_val(changed, entry);
+    }
+
+    if (changed->len == 0) {
+        g_array_free(changed, TRUE);
+        /* Nothing to do, and the same reason to say so: the pick may have been
+         * one the lines could not take, and the dropdown has moved to it. */
+        notify_format(editor);
+        return;
+    }
+
+    UndoRecord* captured =
+        recording(editor)
+            ? undo_record_new_block(editor_block_style_name(style),
+                                    (const UndoBlockLine*) changed->data,
+                                    changed->len)
+            : NULL;
+
+    apply_block_lines(editor, (const UndoBlockLine*) changed->data, changed->len,
+                      FALSE);
+    g_array_free(changed, TRUE);
+
+    note_style_change(editor);
+    record_edit(editor, captured);
+    notify_format(editor);
 }
 
 /* ── recording edits ─────────────────────────────────────────────────────── */
@@ -829,7 +1307,7 @@ static void on_cursor_moved(GObject* buffer, GParamSpec* spec, gpointer user_dat
     }
 
     forget_asked_styles(editor);
-    notify_styles(editor);
+    notify_format(editor);
 }
 
 /* Whether any of the inline tags is already somewhere in [from, to).
@@ -868,7 +1346,10 @@ static void on_text_inserting(GtkTextBuffer* buffer, GtkTextIter* location,
     (void) length;
 
     EditorPanel* editor = user_data;
-    if (editor->loading) {
+    /* Applying a record dresses its own text — put_text_back() clears the
+     * inline tags and lays the record's runs down instead — and the markers a
+     * block record regenerates are not the author's typing either. */
+    if (editor->loading || editor->applying) {
         return;
     }
 
@@ -879,8 +1360,68 @@ static void on_text_inserting(GtkTextBuffer* buffer, GtkTextIter* location,
     editor->insert_styles = editor_typed_styles(
         styles_in_range(&start, &end, editor->inline_tags, INLINE_TAG_COUNT),
         editor->asked_mask, editor->asked_flags);
+
+    EditorBlockTags block;
+    block_tags(editor, &block);
+    editor->insert_block =
+        editor_block_style_at(editor->buffer, &block,
+                              gtk_text_iter_get_line(location));
+
     editor->insert_from = gtk_text_iter_get_offset(location);
     editor->inserting   = TRUE;
+}
+
+/* Give text that has just landed the block its line is, over [from, to).
+ *
+ * The same problem the inline styles have and the same shape of answer: GTK
+ * hands inserted text the tags *covering* the spot, and at the end of a heading
+ * the heading tag stops short, so carrying on typing a title used to produce
+ * plain characters that save then read past. It is also what makes an empty
+ * line stylable at all — the tag lives on the line's newline until there is
+ * text to put it on, and this is what moves it onto the text.
+ *
+ * Only as far as the first newline in what arrived, which is what keeps Enter
+ * doing what it did: the line a return opens is a paragraph, because the block
+ * ends where the text does. A paste of several paragraphs into a heading takes
+ * the heading on its first line and leaves the rest alone, for the same
+ * reason. */
+static void dress_block(EditorPanel* editor, int from, int to)
+{
+    if (to <= from || !block_style_offered(editor->insert_block)) {
+        return;
+    }
+
+    GtkTextIter start;
+    GtkTextIter end;
+    gtk_text_buffer_get_iter_at_offset(editor->buffer, &start, from);
+    gtk_text_buffer_get_iter_at_offset(editor->buffer, &end, to);
+
+    /* Nothing landed on this line: what arrived begins with the newline, which
+     * is a return being pressed. */
+    if (gtk_text_iter_ends_line(&start)) {
+        return;
+    }
+    GtkTextIter line_end = start;
+    gtk_text_iter_forward_to_line_end(&line_end);
+    if (gtk_text_iter_compare(&line_end, &end) < 0) {
+        end = line_end;
+    }
+
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+
+    for (int index = 0; index < EDITOR_BLOCK_STYLE_COUNT; index++) {
+        if (tags.styles[index] == NULL) {
+            continue;
+        }
+        if (index == (int) editor->insert_block) {
+            gtk_text_buffer_apply_tag(editor->buffer, tags.styles[index], &start,
+                                      &end);
+        } else {
+            gtk_text_buffer_remove_tag(editor->buffer, tags.styles[index], &start,
+                                       &end);
+        }
+    }
 }
 
 /* After it lands: dress it. The answer is applied and its opposite removed, so
@@ -923,6 +1464,8 @@ static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
         }
     }
 
+    dress_block(editor, from, to);
+
     /* After the styling, not before: the record carries what the text ended up
      * wearing, so redoing an insertion puts back bold text as bold. */
     if (to > from) {
@@ -932,7 +1475,7 @@ static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
                                              from, to));
     }
 
-    notify_styles(editor);
+    notify_format(editor);
 }
 
 void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
@@ -979,7 +1522,7 @@ void editor_panel_toggle_style(EditorPanel* editor, uint32_t span_flag)
                              &editor->asked_mask, &editor->asked_flags);
     }
 
-    notify_styles(editor);
+    notify_format(editor);
 }
 
 /* ── editing verbs ───────────────────────────────────────────────────────── */
@@ -994,14 +1537,25 @@ void editor_panel_apply_record(EditorPanel* editor, const UndoRecord* record,
     editor->applying = TRUE;
     undo_record_apply(record, editor->buffer, editor->inline_tags, INLINE_TAG_COUNT,
                       reverse);
+    if (record->kind == UNDO_BLOCK) {
+        apply_block_lines(editor, record->block.lines, record->block.line_count,
+                          reverse);
+
+        /* Land the cursor on the change, so a press whose effect is off screen
+         * is not one the author has to go looking for. */
+        GtkTextIter at;
+        gtk_text_buffer_get_iter_at_line(editor->buffer, &at,
+                                         record->block.lines[0].line);
+        gtk_text_buffer_place_cursor(editor->buffer, &at);
+    }
     editor->applying = FALSE;
 
-    if (record->kind == UNDO_STYLE) {
+    if (record->kind == UNDO_STYLE || record->kind == UNDO_BLOCK) {
         note_style_change(editor);
     }
 
     forget_asked_styles(editor);
-    notify_styles(editor);
+    notify_format(editor);
 }
 
 void editor_panel_cut(EditorPanel* editor)
@@ -1186,6 +1740,13 @@ void editor_panel_set_styles_callback(EditorPanel* editor, EditorStylesFn callba
     editor->styles_user_data = user_data;
 }
 
+void editor_panel_set_block_callback(EditorPanel* editor, EditorBlockFn callback,
+                                     void* user_data)
+{
+    editor->block_callback  = callback;
+    editor->block_user_data = user_data;
+}
+
 void editor_panel_set_undo_store(EditorPanel* editor, UndoStore* store)
 {
     editor->undo = store;
@@ -1218,7 +1779,7 @@ void editor_panel_close(EditorPanel* editor)
     g_clear_pointer(&editor->prologue, g_free);
     gtk_widget_set_sensitive(GTK_WIDGET(editor->view), FALSE);
     forget_asked_styles(editor);
-    notify_styles(editor);
+    notify_format(editor);
 }
 
 const char* editor_panel_path(EditorPanel* editor)

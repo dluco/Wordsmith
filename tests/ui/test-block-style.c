@@ -1,0 +1,335 @@
+#include "ui/editor-panel.h"
+
+#include <gtk/gtk.h>
+
+/* What the format bar's dropdown shows, and what picking from it does, are
+ * editor_block_style_at() and editor_block_apply() — so this is where both are
+ * tested. A GtkTextBuffer and its tags are plain objects, the same reason
+ * test-format-bar.c can check the inline half without a display.
+ *
+ * The fixture builds the tags the editor panel builds, under the names the
+ * panel gives them. What matters to these rules is not what a heading looks
+ * like but which lines carry which tag, so the properties are left off. */
+
+typedef struct Fixture {
+    GtkTextBuffer*  buffer;
+    EditorBlockTags tags;
+} Fixture;
+
+static GtkTextTag* make_tag(Fixture* fixture, const char* name)
+{
+    return gtk_text_buffer_create_tag(fixture->buffer, name, NULL);
+}
+
+static void fixture_init(Fixture* fixture, const char* text)
+{
+    fixture->buffer = gtk_text_buffer_new(NULL);
+    memset(&fixture->tags, 0, sizeof(fixture->tags));
+
+    fixture->tags.styles[EDITOR_BLOCK_HEADING_1]     = make_tag(fixture, "heading-1");
+    fixture->tags.styles[EDITOR_BLOCK_HEADING_2]     = make_tag(fixture, "heading-2");
+    fixture->tags.styles[EDITOR_BLOCK_HEADING_3]     = make_tag(fixture, "heading-3");
+    fixture->tags.styles[EDITOR_BLOCK_QUOTE]         = make_tag(fixture, "quote");
+    fixture->tags.styles[EDITOR_BLOCK_BULLET_LIST]   = make_tag(fixture, "list-bullet");
+    fixture->tags.styles[EDITOR_BLOCK_NUMBERED_LIST] = make_tag(fixture, "list-ordered");
+
+    fixture->tags.unoffered[0] = make_tag(fixture, "code-block");
+    fixture->tags.unoffered[1] = make_tag(fixture, "heading-4");
+
+    fixture->tags.marker = make_tag(fixture, "list-marker");
+
+    gtk_text_buffer_set_text(fixture->buffer, text, -1);
+}
+
+static void fixture_clear(Fixture* fixture)
+{
+    g_object_unref(fixture->buffer);
+}
+
+static EditorBlockStyle style_at(Fixture* fixture, int line)
+{
+    return editor_block_style_at(fixture->buffer, &fixture->tags, line);
+}
+
+static void set_style(Fixture* fixture, int first, int last, EditorBlockStyle style)
+{
+    editor_block_apply(fixture->buffer, &fixture->tags, first, last, style);
+    editor_block_renumber(fixture->buffer, &fixture->tags, first - 1, last + 1);
+}
+
+/* Apply a tag by hand across a line and its newline, which is the coverage
+ * editor_block_apply() produces and the coverage the reader expects. */
+static void tag_line(Fixture* fixture, GtkTextTag* tag, int line)
+{
+    GtkTextIter start;
+    GtkTextIter end;
+    gtk_text_buffer_get_iter_at_line(fixture->buffer, &start, line);
+    end = start;
+    if (!gtk_text_iter_forward_line(&end)) {
+        gtk_text_buffer_get_end_iter(fixture->buffer, &end);
+    }
+    gtk_text_buffer_apply_tag(fixture->buffer, tag, &start, &end);
+}
+
+static char* line_text(Fixture* fixture, int line)
+{
+    GtkTextIter start;
+    GtkTextIter end;
+    gtk_text_buffer_get_iter_at_line(fixture->buffer, &start, line);
+    end = start;
+    if (!gtk_text_iter_ends_line(&end)) {
+        gtk_text_iter_forward_to_line_end(&end);
+    }
+    return gtk_text_buffer_get_text(fixture->buffer, &start, &end, FALSE);
+}
+
+static void assert_line(Fixture* fixture, int line, const char* expected)
+{
+    char* actual = line_text(fixture, line);
+    g_assert_cmpstr(actual, ==, expected);
+    g_free(actual);
+}
+
+/* A paragraph is the absence of every other tag, not a tag of its own, so an
+ * untouched buffer reads as paragraphs all the way down. */
+static void test_untagged_lines_are_paragraphs(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "one\ntwo\nthree");
+
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_PARAGRAPH);
+    g_assert_cmpint(style_at(&fixture, 2), ==, EDITOR_BLOCK_PARAGRAPH);
+
+    /* Off the end is not a paragraph — there is no line there to be one. */
+    g_assert_cmpint(style_at(&fixture, 3), ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(style_at(&fixture, -1), ==, EDITOR_BLOCK_OTHER);
+
+    fixture_clear(&fixture);
+}
+
+static void test_a_pick_replaces_what_was_there(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "title\nbody\nmore");
+
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_HEADING_1);
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_HEADING_1);
+    g_assert_cmpint(style_at(&fixture, 1), ==, EDITOR_BLOCK_PARAGRAPH);
+
+    /* The kinds are exclusive: asking for a second one is not adding it. */
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_QUOTE);
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_QUOTE);
+
+    /* And Paragraph is the way back, which is why it is on the list. */
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_PARAGRAPH);
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_PARAGRAPH);
+
+    fixture_clear(&fixture);
+}
+
+/* The text of the line is untouched by any of it — only a list marker ever
+ * moves a character, and a heading moves none. */
+static void test_a_pick_leaves_the_words_alone(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "the words\nsecond");
+
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_HEADING_2);
+    assert_line(&fixture, 0, "the words");
+
+    set_style(&fixture, 0, 0, EDITOR_BLOCK_PARAGRAPH);
+    assert_line(&fixture, 0, "the words");
+    g_assert_cmpint(gtk_text_buffer_get_line_count(fixture.buffer), ==, 2);
+
+    fixture_clear(&fixture);
+}
+
+/* An empty line has one character — its newline — and the tag has to live
+ * there, or "make this line a heading and start typing" would have nowhere to
+ * put the answer between the pick and the first keystroke. */
+static void test_an_empty_line_can_carry_a_style(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "before\n\nafter");
+
+    set_style(&fixture, 1, 1, EDITOR_BLOCK_HEADING_1);
+    g_assert_cmpint(style_at(&fixture, 1), ==, EDITOR_BLOCK_HEADING_1);
+
+    /* And it stays this line's answer rather than leaking onto its neighbours,
+     * which covering the newline is the easiest way to get wrong. */
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_PARAGRAPH);
+    g_assert_cmpint(style_at(&fixture, 2), ==, EDITOR_BLOCK_PARAGRAPH);
+
+    fixture_clear(&fixture);
+}
+
+/* The last line of a buffer has no newline at all, so the range a tag goes on
+ * stops at the end of the text rather than one past it. */
+static void test_the_last_line_can_carry_a_style(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "first\nlast");
+
+    set_style(&fixture, 1, 1, EDITOR_BLOCK_QUOTE);
+    g_assert_cmpint(style_at(&fixture, 1), ==, EDITOR_BLOCK_QUOTE);
+    assert_line(&fixture, 1, "last");
+
+    fixture_clear(&fixture);
+}
+
+static void test_a_bulleted_list_gains_and_loses_its_markers(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "milk\neggs\nbread");
+
+    set_style(&fixture, 0, 2, EDITOR_BLOCK_BULLET_LIST);
+    assert_line(&fixture, 0, "- milk");
+    assert_line(&fixture, 1, "- eggs");
+    assert_line(&fixture, 2, "- bread");
+
+    /* Going back takes the scaffolding with it: a marker is display, not text,
+     * and leaving one behind would put it in the author's manuscript. */
+    set_style(&fixture, 0, 2, EDITOR_BLOCK_PARAGRAPH);
+    assert_line(&fixture, 0, "milk");
+    assert_line(&fixture, 1, "eggs");
+    assert_line(&fixture, 2, "bread");
+
+    fixture_clear(&fixture);
+}
+
+/* A numbered list counts, and a second pick over the same lines does not stack
+ * a marker on top of the one already there. */
+static void test_a_numbered_list_counts(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "one\ntwo\nthree");
+
+    set_style(&fixture, 0, 2, EDITOR_BLOCK_NUMBERED_LIST);
+    assert_line(&fixture, 0, "1. one");
+    assert_line(&fixture, 1, "2. two");
+    assert_line(&fixture, 2, "3. three");
+
+    set_style(&fixture, 0, 2, EDITOR_BLOCK_BULLET_LIST);
+    assert_line(&fixture, 0, "- one");
+    assert_line(&fixture, 2, "- three");
+
+    fixture_clear(&fixture);
+}
+
+/* A run that is broken counts from 1 again on the far side, and a run the
+ * caller only clipped is still renumbered to its own ends — inserting an item
+ * into the middle of ten must not restart the count there. */
+static void test_a_numbered_run_is_renumbered_whole(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "a\nb\nc\nd\ne");
+
+    set_style(&fixture, 0, 4, EDITOR_BLOCK_NUMBERED_LIST);
+    assert_line(&fixture, 4, "5. e");
+
+    /* Break the middle out of the run. What is left is two runs, each counting
+     * from 1, and only the second one moved. */
+    set_style(&fixture, 2, 2, EDITOR_BLOCK_PARAGRAPH);
+    assert_line(&fixture, 0, "1. a");
+    assert_line(&fixture, 1, "2. b");
+    assert_line(&fixture, 2, "c");
+    assert_line(&fixture, 3, "1. d");
+    assert_line(&fixture, 4, "2. e");
+
+    /* Join them back up by naming only the line in the gap. The runs either
+     * side are reached out to, so the count runs 1 to 5 and not 1, 2, 1, 1, 2. */
+    set_style(&fixture, 2, 2, EDITOR_BLOCK_NUMBERED_LIST);
+    assert_line(&fixture, 3, "4. d");
+    assert_line(&fixture, 4, "5. e");
+
+    fixture_clear(&fixture);
+}
+
+/* A line the UI has no name for answers EDITOR_BLOCK_OTHER rather than passing
+ * for a paragraph, which is what stops the dropdown from showing an answer it
+ * could not give back. */
+static void test_an_unoffered_kind_is_not_a_paragraph(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "code\nprose\ndeep heading");
+
+    tag_line(&fixture, fixture.tags.unoffered[0], 0);   /* a code block */
+    tag_line(&fixture, fixture.tags.unoffered[1], 2);   /* a heading 4 */
+
+    g_assert_cmpint(style_at(&fixture, 0), ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(style_at(&fixture, 1), ==, EDITOR_BLOCK_PARAGRAPH);
+    g_assert_cmpint(style_at(&fixture, 2), ==, EDITOR_BLOCK_OTHER);
+
+    fixture_clear(&fixture);
+}
+
+/* The names and the ids are one table read two ways, and the round trip is
+ * what four places agreeing on a style rests on. */
+static void test_every_style_has_a_name_and_an_id(void)
+{
+    for (int style = 0; style < EDITOR_BLOCK_STYLE_COUNT; style++) {
+        const char* name = editor_block_style_name((EditorBlockStyle) style);
+        const char* id   = editor_block_style_id((EditorBlockStyle) style);
+        g_assert_nonnull(name);
+        g_assert_nonnull(id);
+        g_assert_cmpint(editor_block_style_from_id(id), ==, style);
+    }
+
+    /* Anything else is not a style, and must not come back as one. */
+    g_assert_null(editor_block_style_name(EDITOR_BLOCK_OTHER));
+    g_assert_null(editor_block_style_id(EDITOR_BLOCK_STYLE_COUNT));
+    g_assert_cmpint(editor_block_style_from_id("heading-9"), ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_block_style_from_id(NULL), ==, EDITOR_BLOCK_OTHER);
+}
+
+/* The ids reach the menu items and the accelerators as GAction targets, so an
+ * id that needed quoting would break both quietly — the menu item would name an
+ * action nothing answers. Every one has to survive the round trip GTK does. */
+static void test_every_id_survives_a_detailed_action_name(void)
+{
+    for (int style = 0; style < EDITOR_BLOCK_STYLE_COUNT; style++) {
+        GVariant* target = g_variant_ref_sink(
+            g_variant_new_string(editor_block_style_id((EditorBlockStyle) style)));
+        char* detailed = g_action_print_detailed_name("win.block-style", target);
+        g_variant_unref(target);
+
+        char*     name   = NULL;
+        GVariant* parsed = NULL;
+        GError*   error  = NULL;
+        g_assert_true(g_action_parse_detailed_name(detailed, &name, &parsed, &error));
+        g_assert_no_error(error);
+        g_assert_cmpstr(name, ==, "win.block-style");
+        g_assert_nonnull(parsed);
+        g_assert_cmpint(editor_block_style_from_id(g_variant_get_string(parsed, NULL)),
+                        ==, style);
+
+        g_free(name);
+        g_variant_unref(parsed);
+        g_free(detailed);
+    }
+}
+
+int main(int argc, char* argv[])
+{
+    g_test_init(&argc, &argv, NULL);
+    g_test_add_func("/block-style/untagged-is-paragraph",
+                    test_untagged_lines_are_paragraphs);
+    g_test_add_func("/block-style/a-pick-replaces",
+                    test_a_pick_replaces_what_was_there);
+    g_test_add_func("/block-style/words-are-left-alone",
+                    test_a_pick_leaves_the_words_alone);
+    g_test_add_func("/block-style/empty-line", test_an_empty_line_can_carry_a_style);
+    g_test_add_func("/block-style/last-line", test_the_last_line_can_carry_a_style);
+    g_test_add_func("/block-style/bullet-markers",
+                    test_a_bulleted_list_gains_and_loses_its_markers);
+    g_test_add_func("/block-style/numbered-counts", test_a_numbered_list_counts);
+    g_test_add_func("/block-style/renumbered-whole",
+                    test_a_numbered_run_is_renumbered_whole);
+    g_test_add_func("/block-style/unoffered-kinds",
+                    test_an_unoffered_kind_is_not_a_paragraph);
+    g_test_add_func("/block-style/names-and-ids",
+                    test_every_style_has_a_name_and_an_id);
+    g_test_add_func("/block-style/ids-as-action-targets",
+                    test_every_id_survives_a_detailed_action_name);
+    return g_test_run();
+}

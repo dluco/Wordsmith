@@ -88,3 +88,19 @@ target_link_libraries(wordsmith-spell-check-tests PRIVATE
 target_include_directories(wordsmith-spell-check-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME wordsmith-spell-check-tests COMMAND wordsmith-spell-check-tests)
+
+# Headless for the reason the format bar's tests are: a block style is which
+# tag a line carries, and a GtkTextBuffer and its tags need no display. The
+# fixture builds the same tags the editor panel does, under the same names.
+add_executable(wordsmith-block-style-tests
+    test-block-style.c
+)
+
+target_link_libraries(wordsmith-block-style-tests PRIVATE
+    wordsmith-ui
+    gtk4_lib
+)
+
+target_include_directories(wordsmith-block-style-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME wordsmith-block-style-tests COMMAND wordsmith-block-style-tests)

@@ -203,6 +203,23 @@ static void on_format_underline(GSimpleAction* action, GVariant* param, gpointer
     toggle_style(user, WORDSMITH_MARKUP_SPAN_UNDERLINE);
 }
 
+/* One action for all seven block styles rather than seven actions, because the
+ * kinds are exclusive and a dropdown has to be able to *name* the one it is
+ * raising. The parameter is the style's id, so the dropdown, the menu items and
+ * the accelerators all say the same word. */
+static void on_block_style(GSimpleAction* action, GVariant* param, gpointer user)
+{
+    (void) action;
+
+    WordsmithUiState* state = user;
+    const EditorBlockStyle style =
+        editor_block_style_from_id(param != NULL ? g_variant_get_string(param, NULL)
+                                                 : NULL);
+    if (style != EDITOR_BLOCK_OTHER) {
+        editor_panel_set_block_style(state->editor, style);
+    }
+}
+
 /* Text size is an application preference, so the three verbs read the size in
  * force rather than a per-window one, and a failure to save it is worth a word:
  * the pane looks right until the next launch. */
@@ -381,6 +398,49 @@ static const ActionSpec TARGETED_ACTIONS[] = {
     { "trash-item",                 G_CALLBACK(on_trash_item),                 NULL },
 };
 
+/* The block styles' chords, against win.block-style with the style's id as the
+ * parameter.
+ *
+ * Ctrl+0 belongs to the text size, so the heading family moved to Ctrl+Alt
+ * whole rather than letting Paragraph alone take an exception: a set of chords
+ * is worth knowing because of the rule behind it, and "Ctrl+Alt and the
+ * heading's number, except the one that means no heading" is not a rule.
+ *
+ * The three that are not headings have no number of their own to borrow and
+ * take Google Docs' assignment, which is where an author is most likely to
+ * have met them. Each carries the shifted symbol as an alternate for the reason
+ * the text size does: on a US or UK layout Ctrl+Shift+7 reaches the keymap as
+ * ampersand, and naming both is cheaper than depending on which one GTK
+ * matches. */
+static const struct BlockAccel {
+    EditorBlockStyle style;
+    const char*      accel;
+    const char*      alternate_accel;
+} BLOCK_ACCELS[] = {
+    { EDITOR_BLOCK_PARAGRAPH,     "<Control><Alt>0",   NULL },
+    { EDITOR_BLOCK_HEADING_1,     "<Control><Alt>1",   NULL },
+    { EDITOR_BLOCK_HEADING_2,     "<Control><Alt>2",   NULL },
+    { EDITOR_BLOCK_HEADING_3,     "<Control><Alt>3",   NULL },
+    { EDITOR_BLOCK_NUMBERED_LIST, "<Control><Shift>7", "<Control><Shift>ampersand"  },
+    { EDITOR_BLOCK_BULLET_LIST,   "<Control><Shift>8", "<Control><Shift>asterisk"   },
+    { EDITOR_BLOCK_QUOTE,         "<Control><Shift>9", "<Control><Shift>parenleft"  },
+};
+
+/* `win.block-style` with one style's id as its target, in the form both a menu
+ * item and gtk_application_set_accels_for_action() take. Printed rather than
+ * pasted together, so a style id that ever needs quoting still comes out as
+ * something GAction can parse back. Caller frees. */
+static char* block_style_action(EditorBlockStyle style)
+{
+    /* Sunk and released here: g_variant_new_string() hands back a floating
+     * reference and printing a name does not take it. */
+    GVariant* target =
+        g_variant_ref_sink(g_variant_new_string(editor_block_style_id(style)));
+    char* detailed = g_action_print_detailed_name("win.block-style", target);
+    g_variant_unref(target);
+    return detailed;
+}
+
 /* Stateful toggles: boolean state, no parameter, and an initial state that says
  * where the thing starts — the side panes are on screen at launch, composition
  * mode is not.
@@ -455,6 +515,23 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
         g_signal_connect(action, "activate", spec->callback, state);
         g_action_map_add_action(G_ACTION_MAP(state->window), G_ACTION(action));
         g_object_unref(action);
+    }
+
+    /* The block styles: one action taking the style's id, and one accelerator
+     * per id pointed at the same action with a different target. */
+    GSimpleAction* block_style =
+        g_simple_action_new("block-style", G_VARIANT_TYPE_STRING);
+    g_signal_connect(block_style, "activate", G_CALLBACK(on_block_style), state);
+    g_action_map_add_action(G_ACTION_MAP(state->window), G_ACTION(block_style));
+    g_object_unref(block_style);
+
+    for (gsize index = 0; index < G_N_ELEMENTS(BLOCK_ACCELS); index++) {
+        const struct BlockAccel* spec = &BLOCK_ACCELS[index];
+
+        char*       detailed = block_style_action(spec->style);
+        const char* accels[] = { spec->accel, spec->alternate_accel, NULL };
+        gtk_application_set_accels_for_action(app, detailed, accels);
+        g_free(detailed);
     }
 
     for (gsize index = 0; index < G_N_ELEMENTS(TOGGLE_ACTIONS); index++) {
@@ -615,9 +692,32 @@ static GMenuModel* build_menu_model(GMenu** undo_section_out)
     g_object_unref(project_menu);
 
     GMenu* format_menu = g_menu_new();
-    g_menu_append(format_menu, "Bold", "win.format-bold");
-    g_menu_append(format_menu, "Italic", "win.format-italic");
-    g_menu_append(format_menu, "Underline", "win.format-underline");
+
+    GMenu* format_inline_section = g_menu_new();
+    g_menu_append(format_inline_section, "Bold", "win.format-bold");
+    g_menu_append(format_inline_section, "Italic", "win.format-italic");
+    g_menu_append(format_inline_section, "Underline", "win.format-underline");
+    g_menu_append_section(format_menu, NULL, G_MENU_MODEL(format_inline_section));
+    g_object_unref(format_inline_section);
+
+    /* Two sections, so the separator between the headings and the rest is the
+     * menu model's own rather than something drawn. The dropdown showing the
+     * same seven has no separator, GtkDropDown having nowhere to put one. */
+    GMenu* format_heading_section = g_menu_new();
+    GMenu* format_block_section   = g_menu_new();
+    for (int style = 0; style < EDITOR_BLOCK_STYLE_COUNT; style++) {
+        GMenu* section = style <= EDITOR_BLOCK_HEADING_3 ? format_heading_section
+                                                         : format_block_section;
+        char*  detailed = block_style_action((EditorBlockStyle) style);
+        g_menu_append(section, editor_block_style_name((EditorBlockStyle) style),
+                      detailed);
+        g_free(detailed);
+    }
+    g_menu_append_section(format_menu, NULL, G_MENU_MODEL(format_heading_section));
+    g_menu_append_section(format_menu, NULL, G_MENU_MODEL(format_block_section));
+    g_object_unref(format_heading_section);
+    g_object_unref(format_block_section);
+
     g_menu_append_submenu(menubar, "F_ormat", G_MENU_MODEL(format_menu));
     g_object_unref(format_menu);
 
