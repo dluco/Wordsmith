@@ -246,6 +246,18 @@ so save skips them and regenerates numbering from the list tags. Save walks tags
 back through `wordsmith_markup_builder_*`, which keeps escaping and delimiter
 placement testable without a display.
 
+**A list item's marker belongs to the serializer, and to nothing else.** The
+panel says *that* an item is ordered and what number it carries, through
+`wordsmith_markup_builder_set_list()`, and `markup.cpp` writes the `- ` or the
+`1. `. Writing one into a span as well is not a duplicate that cancels out — it
+is a marker in front of a marker, so `- an item` saves as `- - an item` and
+gains another every time the document is opened and saved. That is precisely
+what happened while the builder had no way to state ordering and the panel
+encoded it in a span instead; the fix was to give the builder the answer rather
+than to teach the panel to draw. `set_list()` is the same shape as `set_code()`
+and for the same reason: a fact only one kind of block has, stated rather than
+written into the text.
+
 A block tag covers its line's **newline** as well as its text. That is what lets
 an *empty* line carry one — the newline is the only character there — which is
 what "make this line a heading and start typing" needs between the pick and the

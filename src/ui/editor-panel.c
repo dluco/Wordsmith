@@ -631,17 +631,16 @@ int editor_panel_save(EditorPanel* editor, char** error)
             if (!ordered || !previous_was_ordered) {
                 list_number = 1;
             }
+            /* begin_block takes nesting depth in `level`; ordering and the
+             * running number are their own answer, and stating them is the only
+             * way to say them. **The marker itself is the serializer's**, and
+             * writing one into a span here as well is how a list came to gain
+             * a marker on every save. */
             wordsmith_markup_builder_begin_block(builder,
                                                   WORDSMITH_MARKUP_LIST_ITEM, 0);
-            /* begin_block takes nesting depth in `level`; ordering and the
-             * running number are set through the marker we regenerate here. */
+            wordsmith_markup_builder_set_list(builder, ordered, list_number);
             if (ordered) {
-                char marker[24];
-                g_snprintf(marker, sizeof(marker), "%d. ", list_number);
                 list_number++;
-                wordsmith_markup_builder_add_span(builder, marker, 0, NULL);
-            } else {
-                wordsmith_markup_builder_add_span(builder, "- ", 0, NULL);
             }
             previous_was_ordered = ordered;
         } else {

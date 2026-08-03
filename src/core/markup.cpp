@@ -746,10 +746,16 @@ std::string serialize(const Document& document)
     std::string out;
     for (std::size_t index = 0; index < document.blocks.size(); ++index) {
         if (index > 0) {
-            // List items run together; everything else gets a blank line.
-            const bool both_items = document.blocks[index].kind == BlockKind::ListItem
-                && document.blocks[index - 1].kind == BlockKind::ListItem;
-            out += both_items ? "\n" : "\n\n";
+            // Items of one list run together; everything else gets a blank
+            // line. A bullet item against a numbered one is two lists and not
+            // one — Markdown starts a new list wherever the marker changes —
+            // so the blank line the author left between them is theirs.
+            const Block& block  = document.blocks[index];
+            const Block& before = document.blocks[index - 1];
+            const bool   same_list = block.kind == BlockKind::ListItem
+                && before.kind == BlockKind::ListItem
+                && block.ordered == before.ordered;
+            out += same_list ? "\n" : "\n\n";
         }
         out += serialize_block(document.blocks[index]);
     }

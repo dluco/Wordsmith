@@ -65,7 +65,13 @@ std::vector<Span> parse_inline(std::string_view text);
  *  wrapped paragraph into one block, so serializing re-emits it as a single
  *  long line, and marker styles are normalised (`-` for bullets, `*` for
  *  emphasis). Round-tripping is stable, though: serialize(parse(x)) reaches a
- *  fixed point after one pass. */
+ *  fixed point after one pass.
+ *
+ *  **A list item's marker is written here**, from the block's own `ordered` and
+ *  `list_number`. A caller that also puts one in a span gets both, and gets
+ *  another on every save after that. Items of one list run together; a bullet
+ *  item against a numbered one is two lists, so the blank line between them
+ *  stays. */
 std::string serialize(const Document& document);
 
 /** Render a single run of spans as inline Markdown, escaping as needed.

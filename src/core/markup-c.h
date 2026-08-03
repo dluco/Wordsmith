@@ -90,6 +90,21 @@ void wordsmith_markup_builder_add_span(WordsmithMarkupBuilder* builder,
                                         const char* text, uint32_t flags,
                                         const char* href);
 
+/** Say whether the current LIST_ITEM is ordered, and what number it carries.
+ *
+ *  Ordering is a fact about the block, not about its text, and this is the only
+ *  way to state it — **the marker belongs to the serializer**. A caller that
+ *  writes `- ` or `1. ` into a span of its own gets two markers in the output,
+ *  one of them wrong for an ordered item, and gets another on every save after
+ *  that.
+ *
+ *  `number` is ignored for a bullet, and a number below 1 counts as 1. Ignored
+ *  when no block has been started and when the current block is not a list
+ *  item; the same shape as set_code() below, which is the other fact only one
+ *  kind of block has. */
+void wordsmith_markup_builder_set_list(WordsmithMarkupBuilder* builder, int ordered,
+                                        int number);
+
 /** Set the verbatim body of the current CODE_BLOCK. `language` may be NULL.
  *  Code blocks carry raw text rather than spans, so this replaces add_span for
  *  that kind. Ignored if no block has been started. */

@@ -1,5 +1,7 @@
 #include "core/markup.hpp"
 
+#include "core/markup-c.h"
+
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -190,6 +192,85 @@ void test_wrapped_paragraph_folds_once()
     check_stable(source, "wrapped paragraph");
 }
 
+/* Lists are serialized from the block's own `ordered` and `list_number`, never
+ * from anything a caller wrote into a span. The editor used to draw its own
+ * marker as well, and every save added one more — a manuscript that read
+ * `- - - an item` after three sittings. */
+void test_a_list_item_carries_exactly_one_marker()
+{
+    Document doc;
+
+    Block bullet;
+    bullet.kind = BlockKind::ListItem;
+    bullet.spans.push_back(Span{"an item"});
+    doc.blocks.push_back(bullet);
+
+    Block ordered;
+    ordered.kind        = BlockKind::ListItem;
+    ordered.ordered     = true;
+    ordered.list_number = 4;
+    ordered.spans.push_back(Span{"the fourth"});
+    doc.blocks.push_back(ordered);
+
+    check_equal(wordsmith::markup::serialize(doc),
+                "- an item\n\n4. the fourth\n",
+                "list: one marker each, and the number the block carries");
+
+    /* A bullet against a numbered item is two lists, not one, so the blank line
+     * between them stays. Two items of the same kind still run together. */
+    check_stable("- one\n- two\n\n1. first\n2. second\n",
+                 "list: two lists stay two lists");
+    check_equal(wordsmith::markup::serialize(
+                    wordsmith::markup::parse("- one\n- two\n")),
+                "- one\n- two\n", "list: items of one list run together");
+}
+
+/* The bridge is where the editor says all this, and the marker is deliberately
+ * not sayable through it: a span holding `1. ` is what the doubling was. */
+void test_the_builder_states_ordering_rather_than_drawing_it()
+{
+    WordsmithMarkupBuilder* builder = wordsmith_markup_builder_new();
+
+    wordsmith_markup_builder_begin_block(builder, WORDSMITH_MARKUP_LIST_ITEM, 0);
+    wordsmith_markup_builder_set_list(builder, 0, 1);
+    wordsmith_markup_builder_add_span(builder, "an item", 0, nullptr);
+
+    wordsmith_markup_builder_begin_block(builder, WORDSMITH_MARKUP_LIST_ITEM, 0);
+    wordsmith_markup_builder_set_list(builder, 1, 1);
+    wordsmith_markup_builder_add_span(builder, "first", 0, nullptr);
+
+    wordsmith_markup_builder_begin_block(builder, WORDSMITH_MARKUP_LIST_ITEM, 0);
+    wordsmith_markup_builder_set_list(builder, 1, 2);
+    wordsmith_markup_builder_add_span(builder, "second", 0, nullptr);
+
+    char* markdown = wordsmith_markup_builder_to_markdown(builder);
+    check_equal(markdown, "- an item\n\n1. first\n2. second\n",
+                "builder: markers come from the block, not from a span");
+    wordsmith_free_string(markdown);
+    wordsmith_markup_builder_free(builder);
+
+    /* Saying it of something that is not a list item is ignored rather than
+     * turning it into one, the way set_code() is. */
+    builder = wordsmith_markup_builder_new();
+    wordsmith_markup_builder_begin_block(builder, WORDSMITH_MARKUP_PARAGRAPH, 0);
+    wordsmith_markup_builder_set_list(builder, 1, 3);
+    wordsmith_markup_builder_add_span(builder, "prose", 0, nullptr);
+
+    markdown = wordsmith_markup_builder_to_markdown(builder);
+    check_equal(markdown, "prose\n", "builder: ordering is ignored off a list item");
+    wordsmith_free_string(markdown);
+    wordsmith_markup_builder_free(builder);
+
+    /* And with nothing started at all, which must not reach past the end of an
+     * empty block list. */
+    builder = wordsmith_markup_builder_new();
+    wordsmith_markup_builder_set_list(builder, 1, 1);
+    markdown = wordsmith_markup_builder_to_markdown(builder);
+    check_equal(markdown, "", "builder: ordering before any block is ignored");
+    wordsmith_free_string(markdown);
+    wordsmith_markup_builder_free(builder);
+}
+
 void test_empty()
 {
     check(wordsmith::markup::parse("").blocks.empty(), "empty: no blocks");
@@ -210,6 +291,8 @@ int main()
     test_document_round_trip();
     test_code_block_round_trip();
     test_wrapped_paragraph_folds_once();
+    test_a_list_item_carries_exactly_one_marker();
+    test_the_builder_states_ordering_rather_than_drawing_it();
     test_empty();
 
     if (failures > 0) {

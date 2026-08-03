@@ -187,6 +187,20 @@ void wordsmith_markup_builder_add_span(WordsmithMarkupBuilder* builder,
     builder->doc.blocks.back().spans.push_back(std::move(span));
 }
 
+void wordsmith_markup_builder_set_list(WordsmithMarkupBuilder* builder, int ordered,
+                                        int number)
+{
+    if (builder == nullptr || builder->doc.blocks.empty()) {
+        return;
+    }
+    Block& block = builder->doc.blocks.back();
+    if (block.kind != BlockKind::ListItem) {
+        return;
+    }
+    block.ordered     = ordered != 0;
+    block.list_number = number;
+}
+
 void wordsmith_markup_builder_set_code(WordsmithMarkupBuilder* builder,
                                         const char* code, const char* language)
 {
