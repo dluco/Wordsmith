@@ -17,6 +17,9 @@ static_assert(WORDSMITH_TEXT_SCALE_DEFAULT_PERCENT
               "text scale default disagrees across the bridge");
 static_assert((WORDSMITH_SPELL_CHECK_DEFAULT != 0) == wordsmith::SPELL_CHECK_DEFAULT,
               "spell check default disagrees across the bridge");
+static_assert((WORDSMITH_AUTOFORMAT_LISTS_DEFAULT != 0)
+                  == wordsmith::AUTOFORMAT_LISTS_DEFAULT,
+              "autoformat default disagrees across the bridge");
 
 namespace {
 
@@ -35,6 +38,26 @@ void set_error(char** error, const std::string& message)
     if (error != nullptr) {
         *error = duplicate(message);
     }
+}
+
+/* Set one flag and write the file back.
+ *
+ * Read before writing rather than saving a struct built from nothing: saving
+ * re-emits every field, so everything else in the file has to be carried
+ * across — the size is not this caller's to drop. Once is enough for all of
+ * them, which is what the pointer-to-member is for. */
+int set_flag(bool wordsmith::Preferences::* field, int enabled, char** error)
+{
+    const std::filesystem::path file = wordsmith::preferences_path();
+    wordsmith::Preferences preferences = wordsmith::load_preferences(file);
+    preferences.*field = enabled != 0;
+
+    std::string message;
+    if (!wordsmith::save_preferences(preferences, file, message)) {
+        set_error(error, message);
+        return 0;
+    }
+    return 1;
 }
 
 } // namespace
@@ -70,16 +93,17 @@ int wordsmith_preferences_spell_check(void)
 
 int wordsmith_preferences_set_spell_check(int enabled, char** error)
 {
-    /* Read first, for the reason above: the size in the file is not this
-     * caller's to drop. */
-    const std::filesystem::path file = wordsmith::preferences_path();
-    wordsmith::Preferences preferences = wordsmith::load_preferences(file);
-    preferences.spell_check = enabled != 0;
+    return set_flag(&wordsmith::Preferences::spell_check, enabled, error);
+}
 
-    std::string message;
-    if (!wordsmith::save_preferences(preferences, file, message)) {
-        set_error(error, message);
-        return 0;
-    }
-    return 1;
+int wordsmith_preferences_autoformat_lists(void)
+{
+    return wordsmith::load_preferences(wordsmith::preferences_path()).autoformat_lists
+        ? 1
+        : 0;
+}
+
+int wordsmith_preferences_set_autoformat_lists(int enabled, char** error)
+{
+    return set_flag(&wordsmith::Preferences::autoformat_lists, enabled, error);
 }

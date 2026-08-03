@@ -39,6 +39,17 @@ int wordsmith_preferences_spell_check(void);
  *  caller, freed with wordsmith_free_string) when the file cannot be written. */
 int wordsmith_preferences_set_spell_check(int enabled, char** error);
 
+/* Whether typing `- ` or `1. ` at the head of a paragraph turns it into a list.
+ * Read by the same rule as the flag above; see preferences.hpp. */
+#define WORDSMITH_AUTOFORMAT_LISTS_DEFAULT 1
+
+/** The saved answer, or the default when nothing is saved. */
+int wordsmith_preferences_autoformat_lists(void);
+
+/** Record whether a typed marker makes a list. Returns 0 and fills `error`
+ *  (owned by the caller, freed with wordsmith_free_string) on failure. */
+int wordsmith_preferences_set_autoformat_lists(int enabled, char** error);
+
 #ifdef __cplusplus
 }
 #endif

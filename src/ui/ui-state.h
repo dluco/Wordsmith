@@ -75,6 +75,15 @@ void ui_state_set_format_bar_visible(WordsmithUiState* state, gboolean visible);
  *  config file and applies to every project they open. */
 void ui_state_set_spell_check(WordsmithUiState* state, gboolean enabled);
 
+/** Let a typed `- ` or `1. ` make a list, or stop it, and remember it.
+ *
+ *  The same shape and the same kind of answer as the line above: a preference,
+ *  written to the config file, and the one way it changes. Nothing on screen
+ *  moves — what this decides is what the *next* keystroke means — so unlike the
+ *  spelling there is nothing to tell the editor about, only the check mark and
+ *  the file. */
+void ui_state_set_autoformat_lists(WordsmithUiState* state, gboolean enabled);
+
 /* Composition mode: the manuscript alone, full screen.
  *
  * It is a mode rather than a preference, so nothing about it is written down —

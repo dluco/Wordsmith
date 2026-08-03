@@ -4,6 +4,7 @@
 
 #include "core/frontmatter-c.h"
 #include "core/markup-c.h"
+#include "core/preferences-c.h"
 #include "core/project-c.h"
 
 #include <string.h>
@@ -883,6 +884,19 @@ static void line_bounds(GtkTextBuffer* buffer, int line, GtkTextIter* start,
     }
 }
 
+/* A line without its newline: what the author would say is written there. The
+ * other half of the pair above, and the two are not interchangeable — a block
+ * tag has to reach the newline, and a line's *text* stops before it. */
+static void line_text_bounds(GtkTextBuffer* buffer, int line, GtkTextIter* start,
+                             GtkTextIter* end)
+{
+    gtk_text_buffer_get_iter_at_line(buffer, start, line);
+    *end = *start;
+    if (!gtk_text_iter_ends_line(end)) {
+        gtk_text_iter_forward_to_line_end(end);
+    }
+}
+
 /* The marker at the head of `line`, as [start, end). Both land on the line's
  * first character when there is none. */
 static void marker_bounds(GtkTextBuffer* buffer, const EditorBlockTags* tags,
@@ -1162,6 +1176,59 @@ EditorReturnAction editor_return_action(const char* text, int length,
         return EDITOR_RETURN_ORDINARY;
     }
     return line_is_bare ? EDITOR_RETURN_END_LIST : EDITOR_RETURN_CONTINUE_LIST;
+}
+
+/* Whether a typed marker makes a list, read from the config file the first time
+ * anything asks. Lazily rather than through an init call beside
+ * spell_check_init(): there is nothing to build, one boolean with one reader,
+ * and a file read on the first keystroke of a sitting is cheaper than an entry
+ * point every caller of this file has to remember to call. -1 is "not asked
+ * yet", which is why this is not a gboolean. */
+static int autoformat_lists = -1;
+
+gboolean editor_autoformat_lists(void)
+{
+    if (autoformat_lists < 0) {
+        autoformat_lists = wordsmith_preferences_autoformat_lists() != 0;
+    }
+    return autoformat_lists != 0;
+}
+
+int editor_autoformat_set_lists(gboolean wanted, char** error)
+{
+    /* Before the write, and whatever the write does: a preference that could not
+     * be saved is still the answer the author just gave. */
+    autoformat_lists = wanted ? 1 : 0;
+    return wordsmith_preferences_set_autoformat_lists(wanted ? 1 : 0, error);
+}
+
+/* What a line has to read for the space just typed to have been a list being
+ * started. The same strings editor_block_apply() draws a marker with, which is
+ * not a coincidence worth factoring out: one is what an author types and the
+ * other is what a list looks like, and they are free to differ. */
+static const struct {
+    const char*      typed;
+    EditorBlockStyle style;
+} LIST_MARKERS[] = {
+    { "- ", EDITOR_BLOCK_BULLET_LIST },
+    { "1. ", EDITOR_BLOCK_NUMBERED_LIST },
+};
+
+EditorBlockStyle editor_autoformat_style(const char* text, int length,
+                                         const char* line_text,
+                                         EditorBlockStyle line_style)
+{
+    if (length != 1 || text == NULL || text[0] != ' ' || line_text == NULL
+        || line_style != EDITOR_BLOCK_PARAGRAPH) {
+        return EDITOR_BLOCK_OTHER;
+    }
+
+    for (gsize index = 0; index < G_N_ELEMENTS(LIST_MARKERS); index++) {
+        if (strcmp(line_text, LIST_MARKERS[index].typed) == 0) {
+            return LIST_MARKERS[index].style;
+        }
+    }
+    return EDITOR_BLOCK_OTHER;
 }
 
 EditorBlockStyle editor_block_style_for_press(EditorBlockStyle style,
@@ -1532,17 +1599,97 @@ static UndoRecord* continue_list(EditorPanel* editor, int to)
     return record;
 }
 
+/* Take the marker the author typed out of the text and make the line the list
+ * it was asking for, editor_autoformat_style() having said that is what the
+ * space meant.
+ *
+ * Two edits and one thing done, so the record is a compound — and a compound of
+ * its own, pushed after the space's own text record rather than folded into it.
+ * That is the whole of the escape hatch: one Ctrl+Z takes the conversion back
+ * and leaves a paragraph reading `- `, so an author who meant a literal hyphen
+ * carries on typing, and a second press takes the marker away as ordinary
+ * typing. Rolling both into one record would leave them nothing to do but type
+ * the same three characters again.
+ *
+ * **The list goes on first and the typed characters come out from behind it**,
+ * which is the record's order as much as the buffer's. A compound is named for
+ * its first part, and what the author did here was ask for a list — the other
+ * way round it would read "Undo Typing", naming the bookkeeping instead of the
+ * gesture. It also gives the two parts an order that is right in both
+ * directions: undoing puts the typed marker back before the drawn one comes
+ * off, so the line never ends up wearing neither. The block part being the last
+ * one undone is what leaves the caret at the head of the line afterwards, which
+ * is where undoing any block pick leaves it.
+ *
+ * Both buffer edits are made under `applying`, the way a pick's markers are, so
+ * neither arrives in the history as an edit of its own. */
+static void autoformat_list(EditorPanel* editor, const char* text, int length)
+{
+    if (!editor_autoformat_lists()) {
+        return;
+    }
+
+    GtkTextIter cursor;
+    gtk_text_buffer_get_iter_at_mark(editor->buffer, &cursor,
+                                     gtk_text_buffer_get_insert(editor->buffer));
+    const int line = gtk_text_iter_get_line(&cursor);
+
+    GtkTextIter start;
+    GtkTextIter end;
+    line_text_bounds(editor->buffer, line, &start, &end);
+
+    char* line_text = gtk_text_buffer_get_text(editor->buffer, &start, &end, FALSE);
+    const EditorBlockStyle style =
+        editor_autoformat_style(text, length, line_text, editor->insert_block);
+    g_free(line_text);
+
+    if (style == EDITOR_BLOCK_OTHER) {
+        return;
+    }
+
+    const UndoBlockLine entry = { line, EDITOR_BLOCK_PARAGRAPH, style };
+    UndoRecord*         parts[2] = { NULL, NULL };
+    if (recording(editor)) {
+        parts[0] = undo_record_new_block(editor_block_style_name(style), &entry, 1);
+    }
+    apply_block_lines(editor, &entry, 1, FALSE);
+
+    /* What the author typed is now whatever follows the marker the list drew,
+     * which is how it is found rather than by counting characters: the two
+     * happen to be the same width and have no reason to stay that way. */
+    EditorBlockTags tags;
+    block_tags(editor, &tags);
+
+    GtkTextIter head;
+    marker_bounds(editor->buffer, &tags, line, &head, &start);
+    line_text_bounds(editor->buffer, line, &head, &end);
+
+    if (recording(editor)) {
+        /* Before the characters go, for the reason every deletion is read on
+         * the way out rather than after it. */
+        parts[1] = undo_record_capture_text(editor->buffer, editor->inline_tags,
+                                            INLINE_TAG_COUNT, UNDO_TEXT_DELETE,
+                                            gtk_text_iter_get_offset(&start),
+                                            gtk_text_iter_get_offset(&end));
+    }
+
+    /* Which leaves the cursor where the author was about to type: it was at the
+     * end of the line, and a deletion reaching the end of the line brings it
+     * back to the head of what went. */
+    const gboolean was_applying = editor->applying;
+    editor->applying = TRUE;
+    gtk_text_buffer_delete(editor->buffer, &start, &end);
+    editor->applying = was_applying;
+
+    record_edit(editor, undo_record_new_compound(parts, G_N_ELEMENTS(parts)));
+}
+
 /* After it lands: dress it. The answer is applied and its opposite removed, so
  * Ctrl+B in the middle of a bold word stops the bold rather than inheriting it
  * from either side. */
 static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
                              char* text, int length, gpointer user_data)
 {
-    /* What arrived was read on the way in; what is left to do here is decided
-     * from the offsets and from what the before handler worked out. */
-    (void) text;
-    (void) length;
-
     EditorPanel* editor = user_data;
     if (!editor->inserting) {
         return;
@@ -1591,6 +1738,11 @@ static void on_text_inserted(GtkTextBuffer* buffer, GtkTextIter* location,
     parts[1] = continue_list(editor, to);
 
     record_edit(editor, undo_record_new_compound(parts, G_N_ELEMENTS(parts)));
+
+    /* And after that record rather than inside it: a marker typed into a list is
+     * a second thing done, and the press that takes it back has to leave the
+     * characters that asked for it. */
+    autoformat_list(editor, text, length);
 
     notify_format(editor);
 }

@@ -258,6 +258,59 @@ EditorReturnAction editor_return_action(const char* text, int length,
                                         EditorBlockStyle line_style,
                                         gboolean line_is_bare);
 
+/* ── typing a list into being ────────────────────────────────────────────── */
+
+/* `- ` at the head of a paragraph makes it a bulleted item and `1. ` a numbered
+ * one: the marker the author typed comes out of the text, and the one the list
+ * draws for itself goes in. It is the gesture every editor with lists has, and
+ * the one an author reaches for long before they find the button.
+ *
+ * What makes it safe to do without being asked is that saying no is one
+ * keystroke: the conversion is its own undo record, separate from the typing
+ * that led to it, so Ctrl+Z leaves a paragraph reading `- ` and an author who
+ * meant a literal hyphen carries on. Rolling both into one record would take
+ * the marker away with it and leave them nothing to type but the same three
+ * characters again. */
+
+/** Whether a typed list marker turns the line into a list.
+ *
+ *  The answer is held in one place, the way spell_check_wanted() holds its own
+ *  and for the same reason: the check mark in the menu and what a keystroke
+ *  actually does must not be free to believe different things. */
+gboolean editor_autoformat_lists(void);
+
+/** Record whether a typed marker makes a list. Returns 0 and fills `error`
+ *  (freed with wordsmith_free_string) when the preference cannot be written;
+ *  the answer stands for this sitting either way. */
+int editor_autoformat_set_lists(gboolean wanted, char** error);
+
+/** What the just-typed `text` asks the line it landed in to become, where
+ *  `line_text` is that line as it now reads and `line_style` is the kind it was
+ *  before. EDITOR_BLOCK_OTHER when it asks for nothing, which is nearly always.
+ *
+ *  Three conditions, and the last does most of the work:
+ *
+ *    - a **lone space**, the rule editor_return_action() applies to the newline
+ *      and for the same reason: a paste that happens to contain one is not a
+ *      key being pressed;
+ *    - a **paragraph**, so a hyphen at the head of a heading, of a quote, or of
+ *      an item in a list already, stays a hyphen;
+ *    - and the line reading **exactly** `- ` or `1. `. Nothing else on it is
+ *      also what says the marker is at its start and the cursor at its end,
+ *      so neither has to be asked separately.
+ *
+ *  `1.` and no other number, because the number is not kept: the list counts
+ *  itself from 1, so `3. ` would answer a request to start at three by starting
+ *  at one. Nor `* `, `+ ` or `1) `, which Markdown allows and few authors type.
+ *
+ *  The display-free seam for the whole rule, the shape editor_return_action()
+ *  is. Whether the panel is listening is the preference above, asked
+ *  separately: what a keystroke means and whether it is acted on are two
+ *  questions. */
+EditorBlockStyle editor_autoformat_style(const char* text, int length,
+                                         const char* line_text,
+                                         EditorBlockStyle line_style);
+
 /** What one press of `style` means where `in_force` is the kind covering every
  *  line it addresses (EDITOR_BLOCK_OTHER when they are not all one kind).
  *

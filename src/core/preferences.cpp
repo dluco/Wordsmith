@@ -29,6 +29,7 @@ constexpr const char* PREFERENCES_FILE_NAME = "settings.json";
 constexpr const char* VERSION_KEY = "version";
 constexpr const char* TEXT_SCALE_KEY = "editor-text-scale";
 constexpr const char* SPELL_CHECK_KEY = "spell-check";
+constexpr const char* AUTOFORMAT_LISTS_KEY = "autoformat-lists";
 
 /* An environment variable's value, or empty when it is unset or blank. XDG
  * treats a set-but-empty variable as unset, and so does this. */
@@ -62,6 +63,19 @@ bool read_text_scale(const argo::json& field, int& out)
                                       static_cast<double>(TEXT_SCALE_MIN_PERCENT),
                                       static_cast<double>(TEXT_SCALE_MAX_PERCENT)));
     return true;
+}
+
+/* Every boolean here follows one rule, so it is written down once: only an
+ * outright `false` overrules the default. Anything else — a number, a string, a
+ * key that is not there at all — leaves `out` alone, which is what the header
+ * means by every way of not saying anything. */
+void read_flag(const std::map<std::string, argo::json>& fields, const char* key,
+               bool& out)
+{
+    auto field = fields.find(key);
+    if (field != fields.end() && field->second.is_boolean()) {
+        out = field->second.get_bool();
+    }
 }
 
 } // namespace
@@ -111,13 +125,8 @@ Preferences load_preferences(const fs::path& file)
         preferences.editor_text_scale_percent = clamp_text_scale(percent);
     }
 
-    /* Only an outright `false` turns the marking off. Anything else — a number,
-     * a string, a key that is not there at all — leaves the default standing,
-     * which is what the header means by every way of not saying anything. */
-    auto spell_check = fields.find(SPELL_CHECK_KEY);
-    if (spell_check != fields.end() && spell_check->second.is_boolean()) {
-        preferences.spell_check = spell_check->second.get_bool();
-    }
+    read_flag(fields, SPELL_CHECK_KEY, preferences.spell_check);
+    read_flag(fields, AUTOFORMAT_LISTS_KEY, preferences.autoformat_lists);
 
     return preferences;
 }
@@ -140,6 +149,7 @@ bool save_preferences(const Preferences& preferences, const fs::path& file,
         {TEXT_SCALE_KEY,
          argo::json::integer_value(clamp_text_scale(preferences.editor_text_scale_percent))},
         {SPELL_CHECK_KEY, argo::json::boolean_value(preferences.spell_check)},
+        {AUTOFORMAT_LISTS_KEY, argo::json::boolean_value(preferences.autoformat_lists)},
     });
 
     return write_file_atomically(file, document.serialize() + "\n", error);

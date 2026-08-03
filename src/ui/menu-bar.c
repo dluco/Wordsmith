@@ -284,6 +284,12 @@ static void on_spell_check(GSimpleAction* action, GVariant* value, gpointer user
     ui_state_set_spell_check(user, g_variant_get_boolean(value));
 }
 
+static void on_autoformat_lists(GSimpleAction* action, GVariant* value, gpointer user)
+{
+    (void) action;
+    ui_state_set_autoformat_lists(user, g_variant_get_boolean(value));
+}
+
 static void on_composition_mode(GSimpleAction* action, GVariant* value, gpointer user)
 {
     g_simple_action_set_state(action, value);
@@ -484,11 +490,35 @@ static const ToggleSpec TOGGLE_ACTIONS[] = {
      * is something an author does twice a year, not twice an hour. */
     { "spell-check", "change-state", G_CALLBACK(on_spell_check),
       WORDSMITH_SPELL_CHECK_DEFAULT != 0, NULL },
+    /* The default again rather than the answer, put right below; and no chord,
+     * because a preference an author sets once has no business holding a pair
+     * of keys the manuscript could be using. */
+    { "autoformat-lists", "change-state", G_CALLBACK(on_autoformat_lists),
+      WORDSMITH_AUTOFORMAT_LISTS_DEFAULT != 0, NULL },
     /* F11 is the full-screen key everywhere else, and this is what full screen
      * means in a manuscript editor. Escape leaves as well; see main-window.c. */
     { "composition-mode", "change-state", G_CALLBACK(on_composition_mode), FALSE,
       "F11" },
 };
+
+/* Put a preference's saved answer onto its check mark.
+ *
+ * The table above cannot carry it: the initial state there is the *default*,
+ * and what the author last said is only known once the actions exist. The state
+ * is *set* and not changed — g_simple_action_set_state() moves the check mark
+ * without raising "change-state" — so putting a saved answer back does not
+ * travel round the handler and get written out again as a fresh one. Whatever
+ * else acts on the answer reads it from the same place this does, which is why
+ * the two cannot disagree. */
+static void restore_toggle(WordsmithUiState* state, const char* name,
+                           gboolean answer)
+{
+    GAction* action = g_action_map_lookup_action(G_ACTION_MAP(state->window), name);
+    if (action != NULL) {
+        g_simple_action_set_state(G_SIMPLE_ACTION(action),
+                                  g_variant_new_boolean(answer));
+    }
+}
 
 static void install_actions(WordsmithUiState* state, GtkApplication* app)
 {
@@ -551,18 +581,10 @@ static void install_actions(WordsmithUiState* state, GtkApplication* app)
         }
     }
 
-    /* Spelling starts where the author left it rather than where the table
-     * says. The state is *set* and not changed: g_simple_action_set_state()
-     * moves the check mark without raising "change-state", so putting a saved
-     * answer back does not travel round the handler and get written out again
-     * as a fresh one. The editor panel reads the same answer for itself, and
-     * both read it from spell-check.c, which is why they cannot disagree. */
-    GAction* spelling =
-        g_action_map_lookup_action(G_ACTION_MAP(state->window), "spell-check");
-    if (spelling != NULL) {
-        g_simple_action_set_state(G_SIMPLE_ACTION(spelling),
-                                  g_variant_new_boolean(spell_check_wanted()));
-    }
+    /* Both preferences start where the author left them rather than where the
+     * table says. */
+    restore_toggle(state, "spell-check", spell_check_wanted());
+    restore_toggle(state, "autoformat-lists", editor_autoformat_lists());
 }
 
 /* ── menu model ──────────────────────────────────────────────────────────── */
@@ -717,6 +739,18 @@ static GMenuModel* build_menu_model(GMenu** undo_section_out)
     g_menu_append_section(format_menu, NULL, G_MENU_MODEL(format_block_section));
     g_object_unref(format_heading_section);
     g_object_unref(format_block_section);
+
+    /* In Format rather than beside the spelling in Edit, though both are
+     * preferences and both are things done to the words. What this turns on and
+     * off is a *block style being picked* — the same pick the two items above it
+     * make, asked for by typing instead of from a menu — so it belongs with the
+     * styles it applies, under the heading an author looks under when they want
+     * to know why their hyphen turned into a bullet. */
+    GMenu* format_typing_section = g_menu_new();
+    g_menu_append(format_typing_section, "Make Lists While Typing",
+                  "win.autoformat-lists");
+    g_menu_append_section(format_menu, NULL, G_MENU_MODEL(format_typing_section));
+    g_object_unref(format_typing_section);
 
     g_menu_append_submenu(menubar, "F_ormat", G_MENU_MODEL(format_menu));
     g_object_unref(format_menu);

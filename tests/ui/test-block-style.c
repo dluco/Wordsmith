@@ -305,6 +305,93 @@ static void test_only_the_lists_have_an_off(void)
                     ==, EDITOR_BLOCK_PARAGRAPH);
 }
 
+/* Typing `- ` or `1. ` at the head of a paragraph asks for a list; nothing else
+ * asks for anything. The rule is deliberately narrow, because every case it
+ * gets wrong is a character an author typed being taken away from them. */
+static void test_a_typed_marker_asks_for_a_list(void)
+{
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "- ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_BULLET_LIST);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "1. ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_NUMBERED_LIST);
+
+    /* Only a paragraph. A hyphen at the head of a heading is a hyphen, and one
+     * at the head of an item is the author writing a dash into their list. */
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "- ", EDITOR_BLOCK_HEADING_1),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "- ", EDITOR_BLOCK_QUOTE),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "- ", EDITOR_BLOCK_BULLET_LIST),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "- ", EDITOR_BLOCK_OTHER),
+                    ==, EDITOR_BLOCK_OTHER);
+
+    /* Only the space. Typing the marker is not asking for anything yet — a
+     * hyphen on its own is a line an author may be about to finish. */
+    g_assert_cmpint(editor_autoformat_style("-", 1, "-", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(".", 1, "1.", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+
+    /* And only a lone space, the rule the newline follows: a paste that happens
+     * to carry one is not a key being pressed. */
+    g_assert_cmpint(editor_autoformat_style(" ", 2, "- ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style("- ", 2, "- ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(NULL, 1, "- ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, NULL, EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+
+    /* Nothing else on the line, which is also how the cursor is known to be at
+     * the end of it and the marker at the start. A space typed into `-word` or
+     * in front of a hyphen leaves both alone. */
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "- word", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, " -", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "word - ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+
+    /* `1.` and no other number: the number is not kept, so `3. ` would answer a
+     * request to start at three by starting at one. Nor the other markers
+     * Markdown allows, which few authors type and none would miss. */
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "3. ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "1) ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "* ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+    g_assert_cmpint(editor_autoformat_style(" ", 1, "+ ", EDITOR_BLOCK_PARAGRAPH),
+                    ==, EDITOR_BLOCK_OTHER);
+}
+
+/* What a conversion has to be able to put back. The marker the author typed and
+ * the marker the list draws are the same three characters, so undoing the pick
+ * has to take the drawn one off before the typed one goes back — this is the
+ * half of that a display-free test can hold: applying the style regenerates the
+ * marker, and taking the style off regenerates its absence. */
+static void test_a_converted_line_gives_its_marker_back(void)
+{
+    Fixture fixture;
+    fixture_init(&fixture, "first\n\nthird");
+
+    /* The line as the conversion leaves it: emptied of what was typed, then
+     * made a list. */
+    set_style(&fixture, 1, 1, EDITOR_BLOCK_BULLET_LIST);
+    g_assert_cmpint(style_at(&fixture, 1), ==, EDITOR_BLOCK_BULLET_LIST);
+    assert_line(&fixture, 1, "- ");
+
+    /* And as undoing it leaves the line: a paragraph with nothing on it, ready
+     * for the typed characters to go back. */
+    set_style(&fixture, 1, 1, EDITOR_BLOCK_PARAGRAPH);
+    g_assert_cmpint(style_at(&fixture, 1), ==, EDITOR_BLOCK_PARAGRAPH);
+    assert_line(&fixture, 1, "");
+
+    fixture_clear(&fixture);
+}
+
 /* A return carries a list on, and a return on an item with nothing in it lets
  * the list go. Nothing else about Enter changed. */
 static void test_a_return_carries_a_list_on(void)
@@ -417,6 +504,10 @@ int main(int argc, char* argv[])
                     test_only_the_lists_have_an_off);
     g_test_add_func("/block-style/return-carries-a-list-on",
                     test_a_return_carries_a_list_on);
+    g_test_add_func("/block-style/typed-marker-asks-for-a-list",
+                    test_a_typed_marker_asks_for_a_list);
+    g_test_add_func("/block-style/converted-line-gives-its-marker-back",
+                    test_a_converted_line_gives_its_marker_back);
     g_test_add_func("/block-style/names-and-ids",
                     test_every_style_has_a_name_and_an_id);
     g_test_add_func("/block-style/ids-as-action-targets",

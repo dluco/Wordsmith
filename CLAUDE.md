@@ -145,6 +145,13 @@ the session flags' rule rather than the text size's clamp: **only an outright
 type, an unparseable file — leaves it on. Anything boolean added here inherits
 that, and the default to pick is the one that costs nothing when it is wrong.
 
+Whether a typed list marker makes a list (`autoformat-lists`) is the third, and
+the first to *inherit* that rule rather than state it. `read_flag()` is where it
+is now written down, and both booleans go through it; `set_flag()` in
+`preferences-c.cpp` is the same for the write, which is read-modify-write
+because saving re-emits every field. A third flag is two more lines in
+`load_preferences`/`save_preferences` and a pointer-to-member at the bridge.
+
 ### Session state
 
 Which binder folders were twisted open, which document was being edited, and
@@ -498,6 +505,46 @@ is not a rule. The other three have no number of their own to borrow and take
 Google Docs' assignment. Each carries the shifted symbol as an alternate for the
 reason the text size does: on a US or UK layout Ctrl+Shift+7 reaches the keymap
 as `ampersand`.
+
+### Typing a list into being
+
+`- ` at the head of a paragraph makes it a bulleted item and `1. ` a numbered
+one: the marker the author typed comes out of the text, and the one the list
+draws for itself goes in. It is the gesture every editor with lists has, and the
+one an author reaches for long before they find the button.
+
+What makes it safe to do without being asked is that **saying no is one
+keystroke**. The conversion is its own undo record, pushed after the space's own
+text record rather than folded into it, so Ctrl+Z leaves a paragraph reading
+`- ` and whoever meant a literal hyphen carries on typing. A second press takes
+the characters as ordinary typing. One record for both would leave them nothing
+to do but type the same three characters again.
+
+`editor_autoformat_style()` is the display-free seam and the whole of the rule,
+the same shape `editor_return_action()` is. It is deliberately narrow, because
+every case it gets wrong is a character taken away from the author: a **lone
+space** (a paste carrying one is not a key being pressed), on a **paragraph**
+(a hyphen heading a heading, a quote, or an item already, is a hyphen), and the
+line reading **exactly** `- ` or `1. ` — which is also what says the marker is at
+the start and the cursor at the end, so neither is asked separately. `1.` and no
+other number, since the number is not kept and the list counts itself from 1.
+Not `* `, `+ ` or `1) `. Whether the panel is listening is the preference, asked
+separately: what a keystroke means and whether it is acted on are two questions.
+
+**The list goes on first and the typed characters come out from behind it**,
+which is the compound's order as much as the buffer's. A compound is named for
+its first part, so the other way round Edit ▸ Undo would read "Undo Typing",
+naming the bookkeeping rather than the gesture. It also happens to be the order
+that is right in both directions. The typed characters are then found as
+*whatever follows the drawn marker* rather than by counting: the two are the same
+width today and have no reason to stay that way.
+
+`editor_autoformat_lists()` holds the answer, read from the config file the
+first time anything asks, for the reason `spell_check_wanted()` holds its own —
+the check mark and what a keystroke does must not be free to disagree. The menu
+item is in **Format**, not beside the spelling in Edit: what it turns on and off
+is a block style being picked, by typing instead of from a menu, so it belongs
+with the styles it applies.
 
 ### Spelling
 

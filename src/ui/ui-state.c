@@ -130,6 +130,20 @@ void ui_state_set_spell_check(WordsmithUiState* state, gboolean enabled)
     }
 }
 
+/* The same again, one step shorter: nothing on screen answers to this, so there
+ * is no panel to tell. A failed write is worth the same word for the same
+ * reason — the answer holds for this sitting and is gone after a restart. */
+void ui_state_set_autoformat_lists(WordsmithUiState* state, gboolean enabled)
+{
+    set_toggle_state(state, "autoformat-lists", enabled);
+
+    char* error = NULL;
+    if (!editor_autoformat_set_lists(enabled, &error)) {
+        ui_state_report_error(state, "Cannot save the automatic lists preference",
+                              error);
+    }
+}
+
 /* ── composition mode ────────────────────────────────────────────────────── */
 
 void ui_state_set_composition_mode(WordsmithUiState* state, gboolean composing)

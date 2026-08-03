@@ -88,6 +88,8 @@ void test_missing_file_gives_defaults()
                 "a missing preferences file reads as defaults");
     check(preferences.spell_check,
           "and spelling is checked until the author says otherwise");
+    check(preferences.autoformat_lists,
+          "and a typed marker makes a list until they say otherwise");
 }
 
 void test_round_trip()
@@ -98,6 +100,7 @@ void test_round_trip()
     wordsmith::Preferences written;
     written.editor_text_scale_percent = 140;
     written.spell_check               = false;
+    written.autoformat_lists          = false;
 
     std::string error;
     check(wordsmith::save_preferences(written, file, error),
@@ -106,6 +109,7 @@ void test_round_trip()
     const wordsmith::Preferences read = wordsmith::load_preferences(file);
     check_equal(read.editor_text_scale_percent, 140, "the text size round-trips");
     check(!read.spell_check, "and so does spelling turned off");
+    check(!read.autoformat_lists, "and so do automatic lists turned off");
 }
 
 /* Off is the only answer that has to survive being written down, since on is
@@ -159,6 +163,45 @@ void test_only_an_outright_false_turns_spell_check_off()
     write_file(malformed, "{\"spell-check\": fal");
     check(wordsmith::load_preferences(malformed).spell_check,
           "and so does a truncated file");
+}
+
+/* The second boolean, and the first thing in this file that could be confused
+ * with something else in it: two flags of the same type are a swap nothing
+ * downstream would catch — the author would just find the wrong thing turned
+ * off — so each is read with the other set the opposite way. */
+void test_automatic_lists_is_its_own_answer()
+{
+    TempDir temp;
+
+    const fs::path mixed = temp.path() / "mixed.json";
+    write_file(mixed, "{\"spell-check\": true, \"autoformat-lists\": false}\n");
+    const wordsmith::Preferences read = wordsmith::load_preferences(mixed);
+    check(read.spell_check, "spelling is read from its own key");
+    check(!read.autoformat_lists, "and automatic lists from theirs");
+
+    const fs::path swapped = temp.path() / "swapped.json";
+    write_file(swapped, "{\"spell-check\": false, \"autoformat-lists\": true}\n");
+    const wordsmith::Preferences other = wordsmith::load_preferences(swapped);
+    check(!other.spell_check, "the other way round as well");
+    check(other.autoformat_lists, "for both of them");
+
+    /* And the rule every boolean here inherits, which this one is the second to
+     * inherit rather than the first to state. */
+    const fs::path no_key = temp.path() / "no-lists-key.json";
+    write_file(no_key, "{\"spell-check\": false}\n");
+    check(wordsmith::load_preferences(no_key).autoformat_lists,
+          "a file without the key reads as on");
+
+    const fs::path wrong_type = temp.path() / "lists-string.json";
+    write_file(wrong_type, "{\"autoformat-lists\": \"no\"}\n");
+    check(wordsmith::load_preferences(wrong_type).autoformat_lists,
+          "and so does a hand-edited string");
+
+    const fs::path file = temp.path() / "settings.json";
+    std::string    error;
+    wordsmith::save_preferences(wordsmith::Preferences{}, file, error);
+    check(read_file(file).find("\"autoformat-lists\"") != std::string::npos,
+          "the answer is written under a named key");
 }
 
 /* The file is meant to be legible to whoever opens it, and editable in place. */
@@ -316,6 +359,7 @@ int main()
     test_saving_clamps();
     test_spell_check_is_read_and_written_beside_the_text_size();
     test_only_an_outright_false_turns_spell_check_off();
+    test_automatic_lists_is_its_own_answer();
     test_path_follows_xdg();
 
     return failures == 0 ? 0 : 1;

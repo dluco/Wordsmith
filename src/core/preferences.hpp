@@ -59,9 +59,20 @@ inline constexpr int TEXT_SCALE_DEFAULT_PERCENT = 100;
  * unchecked because a config file was malformed. */
 inline constexpr bool SPELL_CHECK_DEFAULT = true;
 
+/* Whether typing a list marker at the head of a paragraph turns it into a list:
+ * `- ` for a bulleted one, `1. ` for a numbered one.
+ *
+ * Read by the same rule as the flag above, which is the rule every boolean here
+ * inherits — only an outright `false` turns it off. The default costs an author
+ * who did not want it one Ctrl+Z, and costs an author who did nothing; the
+ * other way round, someone who has typed `- ` at the top of a list in every
+ * editor they have used finds it does nothing here and has no idea why. */
+inline constexpr bool AUTOFORMAT_LISTS_DEFAULT = true;
+
 struct Preferences {
     int  editor_text_scale_percent = TEXT_SCALE_DEFAULT_PERCENT;
     bool spell_check               = SPELL_CHECK_DEFAULT;
+    bool autoformat_lists          = AUTOFORMAT_LISTS_DEFAULT;
 };
 
 /** Where the preferences file lives. The file, and the directory holding it,
