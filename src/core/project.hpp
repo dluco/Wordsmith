@@ -304,7 +304,15 @@ bool write_document(const std::filesystem::path& path, std::string_view markdown
 
 /** Turn a user-typed title into a filesystem-safe base name. Collapses runs of
  *  unsafe characters to single hyphens and trims them from the ends. Returns
- *  "untitled" if nothing usable survives. */
+ *  "untitled" if nothing usable survives.
+ *
+ *  **A space is not unsafe.** "The Arrival" is a file called `The Arrival.md`,
+ *  because the binder shows filenames and an author naming a chapter is naming
+ *  what they will read there. Every filesystem Wordsmith runs on takes them,
+ *  and the one place a name is written into a file rather than used as one —
+ *  the `children:` sidecar — quotes what needs quoting already. The rule they
+ *  do take is that a typed space stands in for a hyphen we would otherwise
+ *  have invented, so an unsafe character next to one does not double up. */
 std::string sanitize_name(std::string_view title);
 
 } // namespace wordsmith

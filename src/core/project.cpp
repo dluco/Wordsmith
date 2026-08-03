@@ -841,24 +841,39 @@ std::string sanitize_name(std::string_view title)
     bool pending_separator = false;
 
     for (unsigned char ch : title) {
-        const bool safe = std::isalnum(ch) != 0 || ch == '-' || ch == '_'
-            || ch == '\'' || ch >= 0x80;
-        if (safe) {
-            if (pending_separator && !out.empty()) {
-                out += '-';
-            }
-            pending_separator = false;
-            out += static_cast<char>(ch);
-        } else {
+        const bool space = ch == ' ' || ch == '\t';
+        const bool safe = space || std::isalnum(ch) != 0 || ch == '-'
+            || ch == '_' || ch == '\'' || ch >= 0x80;
+        if (!safe) {
             pending_separator = true;
+            continue;
         }
+
+        if (space) {
+            /* A space is a separator the author typed, so it stands in for one
+             * we were about to invent: "a / b" is "a b" and not "a - b". */
+            pending_separator = false;
+            if (!out.empty() && out.back() != ' ') {
+                out += ' ';
+            }
+            continue;
+        }
+
+        if (pending_separator && !out.empty() && out.back() != ' ') {
+            out += '-';
+        }
+        pending_separator = false;
+        out += static_cast<char>(ch);
     }
 
-    // Leading/trailing hyphens read badly and a leading dot would hide the file.
-    while (!out.empty() && (out.front() == '-' || out.front() == '.')) {
+    /* Leading/trailing hyphens and spaces read badly — and a trailing space
+     * would sit between the name and its extension — while a leading dot would
+     * hide the file. */
+    while (!out.empty() && (out.front() == '-' || out.front() == '.'
+                            || out.front() == ' ')) {
         out.erase(out.begin());
     }
-    while (!out.empty() && out.back() == '-') {
+    while (!out.empty() && (out.back() == '-' || out.back() == ' ')) {
         out.pop_back();
     }
 

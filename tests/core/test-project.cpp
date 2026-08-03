@@ -176,20 +176,20 @@ void test_create_folder_and_document()
     fs::path folder;
     check(project->create_folder(manuscript, "Part One", folder, error),
           "create folder: succeeds (" + error + ")");
-    check(fs::is_directory(manuscript / "Part-One"),
+    check(fs::is_directory(manuscript / "Part One"),
           "create folder: name is sanitised");
-    check(folder == manuscript / "Part-One",
+    check(folder == manuscript / "Part One",
           "create folder: reports where it landed");
 
     fs::path created;
-    check(project->create_document(manuscript / "Part-One", "The Arrival!",
+    check(project->create_document(manuscript / "Part One", "The Arrival!",
                                    created, error),
           "create document: succeeds (" + error + ")");
-    check(created.filename() == "The-Arrival.md",
+    check(created.filename() == "The Arrival.md",
           "create document: sanitised, with the extension added");
     check(fs::is_regular_file(created), "create document: file exists");
 
-    check(!project->create_document(manuscript / "Part-One", "The Arrival!",
+    check(!project->create_document(manuscript / "Part One", "The Arrival!",
                                     created, error),
           "create document: refuses a duplicate");
 }
@@ -276,6 +276,38 @@ void test_child_order_is_a_hint()
           "order: a folder outside the manuscript is rejected");
 }
 
+/* A name with a space in it is the one name that becomes file *content* rather
+ * than just a path: the sidecar writes it down and reads it back. */
+void test_child_order_carries_a_spaced_name()
+{
+    TempDir temp;
+    std::string error;
+    auto project = wordsmith::Project::create(temp.path() / "book", "Book", error);
+    if (project == nullptr) {
+        check(false, "spaced order: setup failed (" + error + ")");
+        return;
+    }
+
+    const fs::path manuscript = project->manuscript_path();
+    fs::path made;
+    project->create_document(manuscript, "The Arrival", made, error);
+    project->create_document(manuscript, "A Departure", made, error);
+
+    check(project->set_child_order(manuscript,
+                                   { "The Arrival.md", "A Departure.md" }, error),
+          "spaced order: writing succeeds (" + error + ")");
+
+    const std::vector<std::string> read = wordsmith::read_child_order(manuscript);
+    check(read.size() == 2 && read[0] == "The Arrival.md"
+              && read[1] == "A Departure.md",
+          "spaced order: the sidecar reads back what it was given");
+
+    const wordsmith::BinderEntry root = wordsmith::load_binder(manuscript);
+    check(root.children.size() == 2 && root.children[0].name == "The Arrival"
+              && root.children[1].name == "A Departure",
+          "spaced order: and the binder follows it");
+}
+
 void test_child_order_preserves_the_sidecar()
 {
     TempDir temp;
@@ -354,7 +386,7 @@ void test_move_entry()
     fs::path moved_folder;
     check(project->move_entry(folder, box, moved_folder, error),
           "move: a folder into another folder (" + error + ")");
-    check(fs::is_directory(box / "Part-One" / "Chapters"),
+    check(fs::is_directory(box / "Part One" / "Chapters"),
           "move: the subtree comes along");
 
     check(!project->move_entry(box, box / "Part-One", moved, error),
@@ -496,7 +528,7 @@ void test_rename_entry()
     fs::path renamed;
     check(project->rename_entry(chapter, "The Arrival", renamed, error),
           "rename: a document is renamed (" + error + ")");
-    check_equal(renamed.filename().string(), "The-Arrival.md",
+    check_equal(renamed.filename().string(), "The Arrival.md",
                 "rename: the typed title is sanitised, and keeps its extension");
     check(!fs::exists(chapter), "rename: the old name is gone");
 
@@ -510,13 +542,13 @@ void test_rename_entry()
     fs::path renamed_folder;
     check(project->rename_entry(folder, "Act One", renamed_folder, error),
           "rename: a folder is renamed (" + error + ")");
-    check_equal(renamed_folder.filename().string(), "Act-One",
+    check_equal(renamed_folder.filename().string(), "Act One",
                 "rename: a folder gains no extension");
 
     /* Renaming to the name it already has is a question with an answer, not an
      * error: nothing to do, and it succeeded. */
     fs::path unchanged;
-    check(project->rename_entry(renamed, "The-Arrival", unchanged, error),
+    check(project->rename_entry(renamed, "The Arrival", unchanged, error),
           "rename: the name it already has succeeds (" + error + ")");
     check_equal(unchanged.string(), renamed.string(),
                 "rename: and reports the same path back");
@@ -815,14 +847,14 @@ void test_group_into_new_folder()
     check(project->group_into_new_folder(manuscript / "two.md", "Part Two", folder,
                                          moved, error),
           "group: succeeds (" + error + ")");
-    check(fs::is_directory(folder) && folder.filename() == "Part-Two",
+    check(fs::is_directory(folder) && folder.filename() == "Part Two",
           "group: the folder is created beside the item");
     check(moved == folder / "two.md" && fs::is_regular_file(moved),
           "group: the item is inside it");
 
     /* The group stands where the thing it gathered used to stand. */
     const std::vector<std::string> order = wordsmith::read_child_order(manuscript);
-    check(order.size() == 3 && order[0] == "one.md" && order[1] == "Part-Two"
+    check(order.size() == 3 && order[0] == "one.md" && order[1] == "Part Two"
               && order[2] == "three.md",
           "group: the new folder takes the item's place in the order");
 
@@ -860,12 +892,20 @@ void test_document_read_write()
 
 void test_sanitize_name()
 {
-    check_equal(wordsmith::sanitize_name("The Arrival"), "The-Arrival",
-                "sanitize: spaces become hyphens");
+    check_equal(wordsmith::sanitize_name("The Arrival"), "The Arrival",
+                "sanitize: spaces survive");
     check_equal(wordsmith::sanitize_name("a/b\\c:d"), "a-b-c-d",
                 "sanitize: path separators are stripped");
+    check_equal(wordsmith::sanitize_name("a / b"), "a b",
+                "sanitize: a typed space stands in for the hyphen");
+    check_equal(wordsmith::sanitize_name("two  spaces"), "two spaces",
+                "sanitize: runs of spaces collapse");
     check_equal(wordsmith::sanitize_name("  padded  "), "padded",
                 "sanitize: edges are trimmed");
+    check_equal(wordsmith::sanitize_name("trailing dot."), "trailing dot",
+                "sanitize: nothing is left between the name and its extension");
+    check_equal(wordsmith::sanitize_name("   "), "untitled",
+                "sanitize: spaces alone are not a name");
     check_equal(wordsmith::sanitize_name("!!!"), "untitled",
                 "sanitize: nothing usable falls back");
     check_equal(wordsmith::sanitize_name(".hidden"), "hidden",
@@ -885,6 +925,7 @@ int main()
     test_create_folder_and_document();
     test_writes_are_confined_to_the_manuscript();
     test_child_order_is_a_hint();
+    test_child_order_carries_a_spaced_name();
     test_child_order_preserves_the_sidecar();
     test_move_entry();
     test_move_maintains_child_order();
